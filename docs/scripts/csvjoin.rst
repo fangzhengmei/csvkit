@@ -70,13 +70,13 @@ Multi-column join (like SQL: ON a.id = b.id AND a.name = b.name):
 
 .. code-block:: bash
 
-   csvjoin -c "id,name;" examples/join_a.csv examples/join_b.csv
+   csvjoin -c "id,name;" examples/join_multi_a.csv examples/join_multi_b.csv
 
 Multi-column join with different column names in each file (like SQL: ON a.customer_id = b.cust_id AND a.order_date = b.date):
 
 .. code-block:: bash
 
-   csvjoin -c "customer_id,order_date;cust_id,date" examples/orders.csv examples/shipments.csv
+   csvjoin -c "customer_id,order_date;cust_id,date" examples/join_multi_c.csv examples/join_multi_d.csv
 
 Add two empty columns to the right of a CSV:
 
