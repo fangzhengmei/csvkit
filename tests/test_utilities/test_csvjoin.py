@@ -119,3 +119,36 @@ class TestCSVJoin(CSVKitTestCase, EmptyFileTests):
             ['2', 'b', 'c', ''],
             ['3', 'b', 'c', ''],
         ])
+
+    def test_multi_column_inner(self):
+        self.assertRows(['-c', 'id,name;', 'examples/join_multi_a.csv', 'examples/join_multi_b.csv'], [
+            ['id', 'name', 'value', 'extra'],
+            ['1', 'Alice', '100', 'extra1'],
+            ['2', 'Bob', '200', 'extra2'],
+            ['3', 'Alice', '300', 'extra3'],
+        ])
+
+    def test_multi_column_left(self):
+        self.assertRows(['-c', 'id,name;', '--left', 'examples/join_multi_a.csv', 'examples/join_multi_b.csv'], [
+            ['id', 'name', 'value', 'extra'],
+            ['1', 'Alice', '100', 'extra1'],
+            ['2', 'Bob', '200', 'extra2'],
+            ['3', 'Alice', '300', 'extra3'],
+            ['4', 'Bob', '400', ''],
+        ])
+
+    def test_multi_column_right(self):
+        output = self.get_output_as_io(['-c', 'id,name;', '--right', 'examples/join_multi_a.csv', 'examples/join_multi_b.csv'])
+        self.assertEqual(len(output.readlines()), 5)
+
+    def test_multi_column_outer(self):
+        output = self.get_output_as_io(['-c', 'id,name;', '--outer', 'examples/join_multi_a.csv', 'examples/join_multi_b.csv'])
+        self.assertEqual(len(output.readlines()), 6)
+
+    def test_multi_column_different_groups(self):
+        self.assertRows(['-c', 'id,name;id,name', 'examples/join_multi_a.csv', 'examples/join_multi_b.csv'], [
+            ['id', 'name', 'value', 'extra'],
+            ['1', 'Alice', '100', 'extra1'],
+            ['2', 'Bob', '200', 'extra2'],
+            ['3', 'Alice', '300', 'extra3'],
+        ])
