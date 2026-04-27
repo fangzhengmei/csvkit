@@ -1,0 +1,5 @@
+cust_id,date,status
+101,2024-01-15,shipped
+102,2024-01-16,pending
+101,2024-01-17,shipped
+104,2024-01-19,processing

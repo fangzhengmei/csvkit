@@ -145,10 +145,10 @@ class TestCSVJoin(CSVKitTestCase, EmptyFileTests):
         output = self.get_output_as_io(['-c', 'id,name;', '--outer', 'examples/join_multi_a.csv', 'examples/join_multi_b.csv'])
         self.assertEqual(len(output.readlines()), 6)
 
-    def test_multi_column_different_groups(self):
-        self.assertRows(['-c', 'id,name;id,name', 'examples/join_multi_a.csv', 'examples/join_multi_b.csv'], [
-            ['id', 'name', 'value', 'extra'],
-            ['1', 'Alice', '100', 'extra1'],
-            ['2', 'Bob', '200', 'extra2'],
-            ['3', 'Alice', '300', 'extra3'],
+    def test_multi_column_different_column_names(self):
+        self.assertRows(['-c', 'customer_id,order_date;cust_id,date', 'examples/join_multi_c.csv', 'examples/join_multi_d.csv'], [
+            ['customer_id', 'order_date', 'amount', 'status'],
+            ['101', '2024-01-15', '500', 'shipped'],
+            ['102', '2024-01-16', '300', 'pending'],
+            ['101', '2024-01-17', '200', 'shipped'],
         ])
