@@ -204,3 +204,31 @@ class TestCSVGrep(CSVKitTestCase, ColumnsTests, EmptyFileTests, NamesTests):
             ['a', 'b', 'c'],
             ['1', '4', '5'],
         ])
+
+    def test_where_help_contains_all_operators(self):
+        utility = self.Utility(args=[])
+        help_text = utility.argparser.format_help()
+        
+        self.assertIn('SET MEMBERSHIP', help_text)
+        self.assertIn('IN (...)', help_text)
+        self.assertIn('NOT IN (...)', help_text)
+        
+        self.assertIn('NULL CHECKING', help_text)
+        self.assertIn('IS NULL', help_text)
+        self.assertIn('IS NOT NULL', help_text)
+        
+        self.assertIn('LOGICAL OPERATORS', help_text)
+        self.assertIn('COMPARISON OPERATORS', help_text)
+        self.assertIn('PATTERN MATCHING', help_text)
+        self.assertIn('GROUPING', help_text)
+        self.assertIn('LITERALS', help_text)
+        self.assertIn('EXAMPLES', help_text)
+
+    def test_where_help_contains_in_examples(self):
+        utility = self.Utility(args=[])
+        help_text = utility.argparser.format_help()
+        
+        self.assertIn("category IN", help_text)
+        self.assertIn("id IN", help_text)
+        self.assertIn("IS NULL", help_text)
+        self.assertIn("IS NOT NULL", help_text)
