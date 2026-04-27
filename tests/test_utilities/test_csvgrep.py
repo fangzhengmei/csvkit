@@ -100,3 +100,81 @@ class TestCSVGrep(CSVKitTestCase, ColumnsTests, EmptyFileTests, NamesTests):
             ['line_numbers', 'a', 'b', 'c'],
             ['1', '1', '2', '3'],
         ])
+
+    def test_where_simple_equality(self):
+        self.assertRows(['-w', "a = '1'", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_with_column_index(self):
+        self.assertRows(['-w', "1 = '1'", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_logical_and(self):
+        self.assertRows(['-w', "a = '1' AND b = '2'", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_logical_or(self):
+        self.assertRows(['-w', "a = '1' OR b = '99'", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_logical_not(self):
+        self.assertRows(['-w', "NOT a = '99'", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_comparison_gt(self):
+        self.assertRows(['-w', "b > 1", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_comparison_lt(self):
+        self.assertRows(['-w', "b < 10", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_like(self):
+        self.assertRows(['-w', "a LIKE '1'", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_rlike(self):
+        self.assertRows(['-w', "a RLIKE '^[0-9]+$'", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_with_inverse(self):
+        self.assertRows(['-w', "a = '99'", '-i', 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_complex_expression(self):
+        self.assertRows(['-w', "(a = '1' AND b > 0) OR c LIKE '%'", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_multiple_rows(self):
+        self.assertRows(['-w', "a = '1'", 'examples/dummy3.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+            ['1', '4', '5'],
+        ])
+
+    def test_where_no_match(self):
+        self.assertRows(['-w', "a = '999'", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+        ])

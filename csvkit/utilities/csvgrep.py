@@ -7,7 +7,7 @@ from argparse import FileType
 import agate
 
 from csvkit.cli import CSVKitUtility
-from csvkit.grep import FilteringCSVReader
+from csvkit.grep import FilteringCSVReader, ExpressionError
 
 
 class CSVGrep(CSVKitUtility):
@@ -37,6 +37,15 @@ class CSVGrep(CSVKitUtility):
         self.argparser.add_argument(
             '-a', '--any-match', dest='any_match', action='store_true',
             help='Select rows in which any column matches, instead of all columns.')
+        self.argparser.add_argument(
+            '-w', '--where', dest='where_expr', action='store',
+            help='A SQL-like WHERE clause expression for complex filtering. Supports: '
+                 'logical operators (AND, OR, NOT), '
+                 'comparison operators (=, !=, <>, >, <, >=, <=), '
+                 'pattern matching (LIKE with %/_ wildcards, RLIKE for regex), '
+                 'and parentheses for grouping. '
+                 'Example: -w "a = 1 AND b LIKE \'%test%\'" '
+                 'When using --where, the -c, -m, -r, -f, and -a options are ignored.')
 
     def main(self):
         if self.args.names_only:
@@ -46,6 +55,33 @@ class CSVGrep(CSVKitUtility):
         if self.additional_input_expected():
             sys.stderr.write('No input file or piped data provided. Waiting for standard input:\n')
 
+        if self.args.where_expr:
+            self._main_with_where()
+        else:
+            self._main_legacy()
+
+    def _main_with_where(self):
+        reader_kwargs = self.reader_kwargs
+        writer_kwargs = self.writer_kwargs
+        if writer_kwargs.pop('line_numbers', False):
+            reader_kwargs['line_numbers'] = True
+
+        rows, column_names, _ = self.get_rows_and_column_names_and_column_ids(**reader_kwargs)
+
+        try:
+            filter_reader = FilteringCSVReader(
+                rows, header=False, expression=self.args.where_expr,
+                inverse=self.args.inverse, column_names=column_names)
+        except ExpressionError as e:
+            self.argparser.error(f'Invalid expression: {e}')
+
+        output = agate.csv.writer(self.output_file, **writer_kwargs)
+        output.writerow(column_names)
+
+        for row in filter_reader:
+            output.writerow(row)
+
+    def _main_legacy(self):
         if not self.args.columns:
             self.argparser.error('You must specify at least one column to search using the -c option.')
 
@@ -54,7 +90,6 @@ class CSVGrep(CSVKitUtility):
 
         reader_kwargs = self.reader_kwargs
         writer_kwargs = self.writer_kwargs
-        # Move the line_numbers option from the writer to the reader.
         if writer_kwargs.pop('line_numbers', False):
             reader_kwargs['line_numbers'] = True
 
