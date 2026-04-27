@@ -5,7 +5,7 @@ csvjoin
 Description
 ===========
 
-Merges two or more CSV tables together using a method analogous to SQL JOIN operation. By default it performs an inner join, but full outer, left outer, and right outer are also available via flags. Key columns are specified with the -c flag (either a single column which exists in all tables, or a comma-separated list of columns with one corresponding to each). If the columns flag is not provided then the tables will be merged "sequentially", that is they will be merged in row order with no filtering:
+Merges two or more CSV tables together using a method analogous to SQL JOIN operation. By default it performs an inner join, but full outer, left outer, and right outer are also available via flags. Key columns are specified with the -c flag (either a single column which exists in all tables, a comma-separated list of columns with one corresponding to each file, or for multi-column joins, a semicolon-separated list of column groups where each group is a comma-separated list of columns). If the columns flag is not provided then the tables will be merged "sequentially", that is they will be merged in row order with no filtering:
 
 .. code-block:: none
 
@@ -29,7 +29,12 @@ Merges two or more CSV tables together using a method analogous to SQL JOIN oper
                            The column name(s) on which to join. Should be either
                            one name (or index) or a comma-separated list with one
                            name (or index) per file, in the same order in which
-                           the files were specified. If not specified, the two
+                           the files were specified. For multi-column joins, use
+                           semicolons to separate column groups for each file, and
+                           commas to separate columns within a group. Example:
+                           "-c a,b;c,d" joins on columns (a,b) from the first file
+                           and (c,d) from the second file. Use "-c a,b;" to join
+                           all files on columns (a,b). If not specified, the two
                            files will be joined sequentially without matching.
      --outer               Perform a full outer join, rather than the default
                            inner join.
@@ -60,6 +65,18 @@ Examples
 .. code-block:: bash
 
    csvjoin -c 1 examples/join_a.csv examples/join_b.csv
+
+Multi-column join (like SQL: ON a.id = b.id AND a.name = b.name):
+
+.. code-block:: bash
+
+   csvjoin -c "id,name;" examples/join_a.csv examples/join_b.csv
+
+Multi-column join with different column names in each file (like SQL: ON a.customer_id = b.cust_id AND a.order_date = b.date):
+
+.. code-block:: bash
+
+   csvjoin -c "customer_id,order_date;cust_id,date" examples/orders.csv examples/shipments.csv
 
 Add two empty columns to the right of a CSV:
 

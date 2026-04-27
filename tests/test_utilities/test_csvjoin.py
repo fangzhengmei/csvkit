@@ -19,8 +19,8 @@ class TestCSVJoin(CSVKitTestCase, EmptyFileTests):
         for args, message in (
             (
                 ['-c' '1,2'],
-                'The number of join column names must match the number of files, '
-                'or be a single column name that exists in all files.',
+                'The number of join column groups must match the number of files, '
+                'or be a single column group that exists in all files.',
             ),
             (['-c', '1', '--left', '--right'], 'It is not valid to specify both a left and a right join.'),
         ):

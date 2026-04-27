@@ -60,8 +60,8 @@ class CSVJoin(CSVKitUtility):
                 join_column_groups = join_column_groups * len(self.input_files)
 
             if len(join_column_groups) != len(self.input_files):
-                self.argparser.error('The number of join column names must match the number of files, or be a single '
-                                     'column name that exists in all files.')
+                self.argparser.error('The number of join column groups must match the number of files, or be a single '
+                                     'column group that exists in all files.')
 
         if (self.args.left_join or self.args.right_join or self.args.outer_join) and not self.args.columns:
             self.argparser.error('You must provide join column names when performing an outer join.')
