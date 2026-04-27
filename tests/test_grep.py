@@ -220,6 +220,24 @@ class TestExpressionParsing(unittest.TestCase):
         expr = parse_expression("name LIKE 'app%'", self.column_names)
         self.assertTrue(expr(self.row1))
         self.assertFalse(expr(self.row2))
+        self.assertFalse(expr(self.row4))
+
+    def test_like_case_sensitive(self):
+        expr = parse_expression("name LIKE 'Apple%'", self.column_names)
+        self.assertFalse(expr(self.row1))
+        self.assertFalse(expr(self.row2))
+        self.assertTrue(expr(self.row4))
+
+    def test_ilike_case_insensitive(self):
+        expr = parse_expression("name ILIKE 'app%'", self.column_names)
+        self.assertTrue(expr(self.row1))
+        self.assertFalse(expr(self.row2))
+        self.assertTrue(expr(self.row4))
+
+    def test_ilike_with_uppercase_pattern(self):
+        expr = parse_expression("name ILIKE 'APP%'", self.column_names)
+        self.assertTrue(expr(self.row1))
+        self.assertFalse(expr(self.row2))
         self.assertTrue(expr(self.row4))
 
     def test_like_single_char(self):
@@ -258,6 +276,69 @@ class TestExpressionParsing(unittest.TestCase):
     def test_invalid_expression_error(self):
         with self.assertRaises(ExpressionError):
             parse_expression("invalid expression", self.column_names)
+
+    def test_negative_number_literal(self):
+        expr = parse_expression("value > -5", self.column_names)
+        self.assertTrue(expr(self.row1))
+        self.assertTrue(expr(self.row2))
+        self.assertTrue(expr(self.row3))
+
+    def test_negative_number_comparison(self):
+        column_names = ['id', 'name', 'value', 'category']
+        rows = [
+            ['1', 'a', '10', 'x'],
+            ['2', 'b', '-5', 'y'],
+            ['3', 'c', '0', 'z'],
+        ]
+        expr = parse_expression("value > -10", column_names)
+        self.assertTrue(expr(rows[0]))
+        self.assertTrue(expr(rows[1]))
+        self.assertTrue(expr(rows[2]))
+
+    def test_negative_number_equality(self):
+        column_names = ['id', 'name', 'value', 'category']
+        rows = [
+            ['1', 'a', '-100', 'x'],
+            ['2', 'b', '100', 'y'],
+        ]
+        expr = parse_expression("value = -100", column_names)
+        self.assertTrue(expr(rows[0]))
+        self.assertFalse(expr(rows[1]))
+
+    def test_negative_decimal_number(self):
+        column_names = ['id', 'price']
+        rows = [
+            ['1', '-9.99'],
+            ['2', '10.50'],
+        ]
+        expr = parse_expression("price < 0", column_names)
+        self.assertTrue(expr(rows[0]))
+        self.assertFalse(expr(rows[1]))
+
+    def test_negative_number_in_in_clause(self):
+        column_names = ['id', 'value']
+        rows = [
+            ['1', '-1'],
+            ['2', '0'],
+            ['3', '1'],
+        ]
+        expr = parse_expression("value IN (-1, 1)", column_names)
+        self.assertTrue(expr(rows[0]))
+        self.assertFalse(expr(rows[1]))
+        self.assertTrue(expr(rows[2]))
+
+    def test_not_null_without_is_syntax_error(self):
+        with self.assertRaises(ExpressionError) as context:
+            parse_expression("name NOT NULL", self.column_names)
+        self.assertIn("NOT NULL", str(context.exception))
+        self.assertIn("IS NOT NULL", str(context.exception))
+
+    def test_not_in_still_works(self):
+        expr = parse_expression("category NOT IN ('fruit')", self.column_names)
+        self.assertFalse(expr(self.row1))
+        self.assertFalse(expr(self.row2))
+        self.assertTrue(expr(self.row3))
+        self.assertTrue(expr(self.row4))
 
     def test_unknown_column(self):
         with self.assertRaises(ExpressionError):

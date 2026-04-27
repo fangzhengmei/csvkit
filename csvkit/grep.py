@@ -19,6 +19,7 @@ class TokenType:
     GE = 'GE'
     LE = 'LE'
     LIKE = 'LIKE'
+    ILIKE = 'ILIKE'
     RLIKE = 'RLIKE'
     IN = 'IN'
     IS = 'IS'
@@ -47,6 +48,7 @@ class Lexer:
         'or': TokenType.OR,
         'not': TokenType.NOT,
         'like': TokenType.LIKE,
+        'ilike': TokenType.ILIKE,
         'rlike': TokenType.RLIKE,
         'in': TokenType.IN,
         'is': TokenType.IS,
@@ -99,13 +101,24 @@ class Lexer:
     def read_number(self):
         start = self.pos
         has_dot = False
+        has_sign = False
+        
+        if self.peek() == '-':
+            self.advance()
+            has_sign = True
+            
         while self.peek() is not None and (self.peek().isdigit() or self.peek() == '.'):
             if self.peek() == '.':
                 if has_dot:
                     break
                 has_dot = True
             self.advance()
+            
         value = self.text[start:self.pos]
+        
+        if has_sign and value == '-':
+            self.error('Invalid number: "-" without digits')
+            
         if has_dot:
             return Token(TokenType.NUMBER, float(value))
         return Token(TokenType.NUMBER, int(value))
@@ -138,7 +151,13 @@ class Lexer:
                     return Token(TokenType.IDENTIFIER, value)
                 return Token(TokenType.STRING, value)
 
-            if char.isdigit():
+            if char.isdigit() or char == '-':
+                if char == '-':
+                    if self.pos + 1 >= len(self.text):
+                        self.error("Unexpected character: '-' at end of expression")
+                    next_char = self.text[self.pos + 1]
+                    if not (next_char.isdigit() or next_char == '.'):
+                        self.error("Unexpected character: '-' (subtraction is not supported, only negative numbers)")
                 return self.read_number()
 
             if char == '(':
@@ -292,7 +311,7 @@ class Parser:
         while True:
             if self.current_token.type in (
                 TokenType.EQ, TokenType.NE, TokenType.GT, TokenType.LT,
-                TokenType.GE, TokenType.LE, TokenType.LIKE, TokenType.RLIKE
+                TokenType.GE, TokenType.LE, TokenType.LIKE, TokenType.ILIKE, TokenType.RLIKE
             ):
                 op = self.current_token
                 self.eat(self.current_token.type)
@@ -308,8 +327,7 @@ class Parser:
                     values = self._parse_in_values()
                     node = InOp(node, values, negated=True)
                 elif self.current_token.type == TokenType.NULL:
-                    self.eat(TokenType.NULL)
-                    node = IsNullOp(node, negated=True)
+                    self.error('Syntax error: "NOT NULL" is not valid. Use "IS NOT NULL" instead.')
                 else:
                     node = UnaryOp(Token(type=TokenType.NOT, value='NOT'), node)
                     break
@@ -480,6 +498,9 @@ class Evaluator:
                 elif op == TokenType.LE:
                     return left_str <= right_str
         elif op == TokenType.LIKE:
+            pattern = self._like_to_regex(str(right_val))
+            return re.match(pattern, str(left_val)) is not None
+        elif op == TokenType.ILIKE:
             pattern = self._like_to_regex(str(right_val))
             return re.match(pattern, str(left_val), re.IGNORECASE) is not None
         elif op == TokenType.RLIKE:
