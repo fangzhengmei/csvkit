@@ -20,8 +20,12 @@ class TokenType:
     LE = 'LE'
     LIKE = 'LIKE'
     RLIKE = 'RLIKE'
+    IN = 'IN'
+    IS = 'IS'
+    NULL = 'NULL'
     LPAREN = 'LPAREN'
     RPAREN = 'RPAREN'
+    COMMA = 'COMMA'
     IDENTIFIER = 'IDENTIFIER'
     STRING = 'STRING'
     NUMBER = 'NUMBER'
@@ -44,6 +48,9 @@ class Lexer:
         'not': TokenType.NOT,
         'like': TokenType.LIKE,
         'rlike': TokenType.RLIKE,
+        'in': TokenType.IN,
+        'is': TokenType.IS,
+        'null': TokenType.NULL,
     }
 
     def __init__(self, text):
@@ -142,6 +149,10 @@ class Lexer:
                 self.advance()
                 return Token(TokenType.RPAREN, ')')
 
+            if char == ',':
+                self.advance()
+                return Token(TokenType.COMMA, ',')
+
             if char == '=':
                 self.advance()
                 return Token(TokenType.EQ, '=')
@@ -214,6 +225,25 @@ class ColumnRef(ASTNode):
         return f'ColumnRef({self.name!r})'
 
 
+class InOp(ASTNode):
+    def __init__(self, left, values, negated=False):
+        self.left = left
+        self.values = values
+        self.negated = negated
+
+    def __repr__(self):
+        return f'InOp({self.left}, {self.values}, negated={self.negated})'
+
+
+class IsNullOp(ASTNode):
+    def __init__(self, operand, negated=False):
+        self.operand = operand
+        self.negated = negated
+
+    def __repr__(self):
+        return f'IsNullOp({self.operand}, negated={self.negated})'
+
+
 class Parser:
     def __init__(self, lexer):
         self.lexer = lexer
@@ -259,14 +289,69 @@ class Parser:
 
     def comparison(self):
         node = self.atom()
-        while self.current_token.type in (
-            TokenType.EQ, TokenType.NE, TokenType.GT, TokenType.LT,
-            TokenType.GE, TokenType.LE, TokenType.LIKE, TokenType.RLIKE
-        ):
-            op = self.current_token
-            self.eat(self.current_token.type)
-            node = BinaryOp(node, op, self.atom())
+        while True:
+            if self.current_token.type in (
+                TokenType.EQ, TokenType.NE, TokenType.GT, TokenType.LT,
+                TokenType.GE, TokenType.LE, TokenType.LIKE, TokenType.RLIKE
+            ):
+                op = self.current_token
+                self.eat(self.current_token.type)
+                node = BinaryOp(node, op, self.atom())
+            elif self.current_token.type == TokenType.IN:
+                self.eat(TokenType.IN)
+                values = self._parse_in_values()
+                node = InOp(node, values, negated=False)
+            elif self.current_token.type == TokenType.NOT:
+                self.eat(TokenType.NOT)
+                if self.current_token.type == TokenType.IN:
+                    self.eat(TokenType.IN)
+                    values = self._parse_in_values()
+                    node = InOp(node, values, negated=True)
+                elif self.current_token.type == TokenType.NULL:
+                    self.eat(TokenType.NULL)
+                    node = IsNullOp(node, negated=True)
+                else:
+                    node = UnaryOp(Token(type=TokenType.NOT, value='NOT'), node)
+                    break
+            elif self.current_token.type == TokenType.IS:
+                self.eat(TokenType.IS)
+                if self.current_token.type == TokenType.NULL:
+                    self.eat(TokenType.NULL)
+                    node = IsNullOp(node, negated=False)
+                elif self.current_token.type == TokenType.NOT:
+                    self.eat(TokenType.NOT)
+                    if self.current_token.type == TokenType.NULL:
+                        self.eat(TokenType.NULL)
+                        node = IsNullOp(node, negated=True)
+                    else:
+                        self.error('Expected NULL after IS NOT')
+                else:
+                    self.error('Expected NULL or NOT after IS')
+            else:
+                break
         return node
+
+    def _parse_in_values(self):
+        self.eat(TokenType.LPAREN)
+        values = []
+        if self.current_token.type != TokenType.RPAREN:
+            values.append(self._parse_in_value())
+            while self.current_token.type == TokenType.COMMA:
+                self.eat(TokenType.COMMA)
+                values.append(self._parse_in_value())
+        self.eat(TokenType.RPAREN)
+        return values
+
+    def _parse_in_value(self):
+        token = self.current_token
+        if token.type == TokenType.STRING:
+            self.eat(TokenType.STRING)
+            return Literal(token.value)
+        elif token.type == TokenType.NUMBER:
+            self.eat(TokenType.NUMBER)
+            return Literal(token.value)
+        else:
+            self.error(f'Expected string or number in IN clause, got {token.type}')
 
     def atom(self):
         token = self.current_token
@@ -325,8 +410,23 @@ class Evaluator:
             raise ExpressionError(f'Unknown unary operator: {node.op}')
         elif isinstance(node, BinaryOp):
             return self._evaluate_binary(node, row)
+        elif isinstance(node, InOp):
+            return self._evaluate_in(node, row)
+        elif isinstance(node, IsNullOp):
+            return self._evaluate_is_null(node, row)
         else:
             raise ExpressionError(f'Unknown node type: {type(node)}')
+
+    def _evaluate_in(self, node, row):
+        left_val = self.evaluate(node.left, row)
+        in_values = [self.evaluate(v, row) for v in node.values]
+        result = any(self._compare_eq(left_val, v) for v in in_values)
+        return result if not node.negated else not result
+
+    def _evaluate_is_null(self, node, row):
+        val = self.evaluate(node.operand, row)
+        is_null = val is None or str(val).strip() == ''
+        return is_null if not node.negated else not is_null
 
     def _to_bool(self, value):
         if isinstance(value, str):

@@ -264,6 +264,71 @@ class TestExpressionParsing(unittest.TestCase):
             expr = parse_expression("unknown_col = 'test'", self.column_names)
             expr(self.row1)
 
+    def test_in_operator(self):
+        expr = parse_expression("category IN ('fruit', 'dessert')", self.column_names)
+        self.assertTrue(expr(self.row1))
+        self.assertTrue(expr(self.row2))
+        self.assertFalse(expr(self.row3))
+        self.assertTrue(expr(self.row4))
+
+    def test_in_operator_with_numbers(self):
+        expr = parse_expression("value IN (10, 20, 30)", self.column_names)
+        self.assertTrue(expr(self.row1))
+        self.assertTrue(expr(self.row2))
+        self.assertTrue(expr(self.row3))
+        self.assertFalse(expr(self.row4))
+
+    def test_not_in_operator(self):
+        expr = parse_expression("category NOT IN ('fruit', 'dessert')", self.column_names)
+        self.assertFalse(expr(self.row1))
+        self.assertFalse(expr(self.row2))
+        self.assertTrue(expr(self.row3))
+        self.assertFalse(expr(self.row4))
+
+    def test_in_with_single_value(self):
+        expr = parse_expression("category IN ('fruit')", self.column_names)
+        self.assertTrue(expr(self.row1))
+        self.assertTrue(expr(self.row2))
+        self.assertFalse(expr(self.row3))
+
+    def test_is_null(self):
+        column_names = ['id', 'name', 'value', 'category']
+        row_with_null = ['5', '', '', '']
+        row_not_null = ['1', 'apple', '10', 'fruit']
+        expr = parse_expression("name IS NULL", column_names)
+        self.assertTrue(expr(row_with_null))
+        self.assertFalse(expr(row_not_null))
+
+    def test_is_not_null(self):
+        column_names = ['id', 'name', 'value', 'category']
+        row_with_null = ['5', '', '', '']
+        row_not_null = ['1', 'apple', '10', 'fruit']
+        expr = parse_expression("name IS NOT NULL", column_names)
+        self.assertFalse(expr(row_with_null))
+        self.assertTrue(expr(row_not_null))
+
+    def test_in_with_logical_and(self):
+        expr = parse_expression("category IN ('fruit') AND value > 15", self.column_names)
+        self.assertFalse(expr(self.row1))
+        self.assertTrue(expr(self.row2))
+        self.assertFalse(expr(self.row3))
+
+    def test_complex_in_expression(self):
+        expr = parse_expression("(category IN ('fruit', 'vegetable') AND value > 15) OR name = 'Apple Pie'", self.column_names)
+        self.assertFalse(expr(self.row1))
+        self.assertTrue(expr(self.row2))
+        self.assertTrue(expr(self.row3))
+        self.assertTrue(expr(self.row4))
+
+    def test_is_null_with_logical_or(self):
+        column_names = ['id', 'name', 'value', 'category']
+        row_with_null_name = ['5', '', '10', 'fruit']
+        row_with_null_value = ['6', 'orange', '', 'fruit']
+        expr = parse_expression("name IS NULL OR value IS NULL", column_names)
+        self.assertTrue(expr(row_with_null_name))
+        self.assertTrue(expr(row_with_null_value))
+        self.assertFalse(expr(self.row1))
+
 
 class TestFilteringCSVReaderWithExpression(unittest.TestCase):
 

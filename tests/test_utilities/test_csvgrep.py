@@ -178,3 +178,29 @@ class TestCSVGrep(CSVKitTestCase, ColumnsTests, EmptyFileTests, NamesTests):
         self.assertRows(['-w', "a = '999'", 'examples/dummy.csv'], [
             ['a', 'b', 'c'],
         ])
+
+    def test_where_in_operator(self):
+        self.assertRows(['-w', "a IN ('1', '2')", 'examples/dummy3.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+            ['1', '4', '5'],
+        ])
+
+    def test_where_in_with_numbers(self):
+        self.assertRows(['-w', "b IN (2, 4)", 'examples/dummy3.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+            ['1', '4', '5'],
+        ])
+
+    def test_where_not_in_operator(self):
+        self.assertRows(['-w', "a NOT IN ('99')", 'examples/dummy.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '2', '3'],
+        ])
+
+    def test_where_in_complex(self):
+        self.assertRows(['-w', "a IN ('1') AND b > 3", 'examples/dummy3.csv'], [
+            ['a', 'b', 'c'],
+            ['1', '4', '5'],
+        ])
