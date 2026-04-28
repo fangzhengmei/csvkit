@@ -259,12 +259,33 @@ class TestTypeInferenceConsistency(unittest.TestCase):
         csvsql_types_default = get_csvsql_types(csv_file, [])
         csvsql_types_with_format = get_csvsql_types(csv_file, ['--date-format', '%d/%m/%Y'])
 
+        csvjson_values_default = get_csvjson_values(csv_file, [])
+        csvjson_values_with_format = get_csvjson_values(csv_file, ['--date-format', '%d/%m/%Y'])
+
         for col_name in csvstat_types_default:
             default_type = csvstat_types_default[col_name]
             formatted_type = csvstat_types_with_format[col_name]
 
             self.assertEqual(csvsql_types_default[col_name], AGATE_TO_SQL_MAP[default_type])
             self.assertEqual(csvsql_types_with_format[col_name], AGATE_TO_SQL_MAP[formatted_type])
+
+        self.assertEqual(
+            csvstat_types_default['a'], 'Text',
+            "Without --date-format, '02/01/2014' should be inferred as Text"
+        )
+        self.assertEqual(
+            csvstat_types_with_format['a'], 'Date',
+            "With --date-format '%d/%m/%Y', '02/01/2014' should be parsed as Date"
+        )
+
+        self.assertEqual(
+            csvjson_values_default['a'], '02/01/2014',
+            "Without --date-format, csvjson should output original string '02/01/2014'"
+        )
+        self.assertEqual(
+            csvjson_values_with_format['a'], '2014-01-02',
+            "With --date-format '%d/%m/%Y', csvjson should output ISO format '2014-01-02'"
+        )
 
 
 if __name__ == '__main__':
