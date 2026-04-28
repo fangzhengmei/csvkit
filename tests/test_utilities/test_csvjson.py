@@ -230,3 +230,15 @@ class TestCSVJSON(CSVKitTestCase, EmptyFileTests):
             '{"type": "Feature", "properties": {"slug": "obeidder", "title": "Obeidder Monster", "description": "Sharpie and Spray Paint", "address": "3319 Seaton St.", "type": "Street Art", "photo_url": "http://i.imgur.com/3aX7E.jpg", "photo_credit": "Photo by Justin Edwards. Used with permission.", "last_seen_date": "4/15/12"}, "geometry": {"type": "Point", "coordinates": [-95.334619, 32.314431]}}',  # noqa: E501
             '{"type": "Feature", "properties": {"slug": "sensor-device", "title": "Sensor Device", "artist": "Kurt Dyrhaug", "address": "University of Texas, Campus Drive", "type": "Sculpture", "photo_url": "http://media.hacktyler.com/artmap/photos/sensor-device.jpg", "photo_credit": "Photo by Christopher Groskopf. Used with permission.", "last_seen_date": "4/16/12"}, "geometry": {"type": "Point", "coordinates": [-95.250699, 32.317216]}}',  # noqa: E501
         ])
+
+    def test_no_leading_zeroes_default(self):
+        js = json.loads(self.get_output(['examples/test_no_leading_zeroes.csv']))
+        self.assertEqual(js[0]['a'], 1)
+        self.assertEqual(js[0]['b'], 0.11)
+        self.assertEqual(js[0]['c'], 0.1)
+
+    def test_no_leading_zeroes(self):
+        js = json.loads(self.get_output(['--no-leading-zeroes', 'examples/test_no_leading_zeroes.csv']))
+        self.assertEqual(js[0]['a'], '01')
+        self.assertEqual(js[0]['b'], '00.11')
+        self.assertEqual(js[0]['c'], 0.1)

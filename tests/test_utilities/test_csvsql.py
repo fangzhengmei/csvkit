@@ -276,3 +276,15 @@ class TestCSVSQL(CSVKitTestCase, EmptyFileTests):
         self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'foo', 'examples/foo1.csv'])
         self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables',
                         'foo', 'examples/foo2.csv', '--create-if-not-exists'])
+
+    def test_no_leading_zeroes_default(self):
+        sql = self.get_output(['--tables', 'foo', 'examples/test_no_leading_zeroes.csv'])
+        self.assertIn('a DECIMAL', sql)
+        self.assertIn('b DECIMAL', sql)
+        self.assertIn('c DECIMAL', sql)
+
+    def test_no_leading_zeroes(self):
+        sql = self.get_output(['--tables', 'foo', '--no-leading-zeroes', 'examples/test_no_leading_zeroes.csv'])
+        self.assertIn('a VARCHAR', sql)
+        self.assertIn('b VARCHAR', sql)
+        self.assertIn('c DECIMAL', sql)

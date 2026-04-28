@@ -169,3 +169,11 @@ class TestCSVStat(CSVKitTestCase, ColumnsTests, EmptyFileTests, NamesTests):
         ])
 
         self.assertEqual(output, '9,748.35\n')
+
+    def test_no_leading_zeroes_default(self):
+        output = self.get_output(['-c', '1', '--type', 'examples/test_no_leading_zeroes.csv'])
+        self.assertEqual(output.strip(), 'Number')
+
+    def test_no_leading_zeroes(self):
+        output = self.get_output(['-c', '1', '--type', '--no-leading-zeroes', 'examples/test_no_leading_zeroes.csv'])
+        self.assertEqual(output.strip(), 'Text')
