@@ -362,13 +362,13 @@ class CSVKitUtility:
                 types = [
                     agate.Boolean(**type_kwargs),
                     agate.TimeDelta(**type_kwargs),
-                    agate.Date(date_format=self.args.date_format, **type_kwargs),
-                    agate.DateTime(datetime_format=self.args.datetime_format, **type_kwargs),
+                    agate.Date(date_format=getattr(self.args, 'date_format', None), **type_kwargs),
+                    agate.DateTime(datetime_format=getattr(self.args, 'datetime_format', None), **type_kwargs),
                     text_type,
                 ]
 
                 # In order to parse dates like "20010101".
-                if self.args.date_format or self.args.datetime_format:
+                if getattr(self.args, 'date_format', None) or getattr(self.args, 'datetime_format', None):
                     types.insert(-1, number_type)
                 else:
                     types.insert(1, number_type)
