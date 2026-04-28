@@ -106,6 +106,22 @@ def get_csvjson_value_types(csv_file, args=None):
     return types
 
 
+def get_csvjson_values(csv_file, args=None):
+    """Get actual values from csvjson output."""
+    args = args or []
+    output_file = io.StringIO()
+    utility = CSVJSON([csv_file] + args, output_file)
+    utility.run()
+    output = output_file.getvalue()
+    output_file.close()
+
+    data = json.loads(output)
+    if not data:
+        return {}
+
+    return data[0]
+
+
 class TestTypeInferenceConsistency(unittest.TestCase):
     def test_default_types_consistency(self):
         """Test that all tools infer the same types with default parameters."""
@@ -193,11 +209,45 @@ class TestTypeInferenceConsistency(unittest.TestCase):
         csvsql_types_no_blanks = get_csvsql_types(csv_file, [])
         csvsql_types_blanks = get_csvsql_types(csv_file, ['--blanks'])
 
+        csvjson_values_no_blanks = get_csvjson_values(csv_file, [])
+        csvjson_values_blanks = get_csvjson_values(csv_file, ['--blanks'])
+
         for col_name in csvstat_types_no_blanks:
             if csvstat_types_no_blanks[col_name] == 'Boolean':
                 self.assertEqual(csvstat_types_blanks[col_name], 'Text')
                 self.assertEqual(csvsql_types_no_blanks[col_name], 'BOOLEAN')
                 self.assertEqual(csvsql_types_blanks[col_name], 'VARCHAR')
+
+        for col_name in csvjson_values_no_blanks:
+            self.assertIsNone(
+                csvjson_values_no_blanks[col_name],
+                f"Column '{col_name}': without --blanks, value should be null"
+            )
+
+        self.assertEqual(
+            csvjson_values_blanks['a'], '',
+            "Column 'a' (empty string ''): with --blanks, value should be empty string ''"
+        )
+        self.assertEqual(
+            csvjson_values_blanks['b'], 'NA',
+            "Column 'b' ('NA'): with --blanks, value should be 'NA' not null"
+        )
+        self.assertEqual(
+            csvjson_values_blanks['c'], 'N/A',
+            "Column 'c' ('N/A'): with --blanks, value should be 'N/A' not null"
+        )
+        self.assertEqual(
+            csvjson_values_blanks['d'], 'NONE',
+            "Column 'd' ('NONE'): with --blanks, value should be 'NONE' not null"
+        )
+        self.assertEqual(
+            csvjson_values_blanks['e'], 'NULL',
+            "Column 'e' ('NULL'): with --blanks, value should be 'NULL' not null"
+        )
+        self.assertEqual(
+            csvjson_values_blanks['f'], '.',
+            "Column 'f' ('.'): with --blanks, value should be '.' not null"
+        )
 
     def test_date_format_consistency(self):
         """Test --date-format parameter consistency across tools."""
