@@ -33,7 +33,7 @@ class SQL2CSV(CSVKitUtility):
             '--query',
             help="The SQL query to execute. Overrides FILE and STDIN.")
         self.argparser.add_argument(
-            '-e', '--encoding', dest='encoding', default='utf-8',
+            '-e', '--encoding', dest='encoding', default='utf-8-sig',
             help='Specify the encoding of the input query file.')
         self.argparser.add_argument(
             '-H', '--no-header-row', dest='no_header_row', action='store_true',
@@ -43,7 +43,7 @@ class SQL2CSV(CSVKitUtility):
             delimiter=None,
             doublequote=None,
             escapechar=None,
-            encoding='utf-8',
+            encoding='utf-8-sig',
             field_size_limit=None,
             quotechar=None,
             quoting=None,

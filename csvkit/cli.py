@@ -6,6 +6,7 @@ import csv
 import datetime
 import decimal
 import gzip
+import io
 import itertools
 import lzma
 import os
@@ -89,6 +90,11 @@ class CSVKitUtility:
         # Output file is only set during testing.
         if output_file is None:
             self.output_file = sys.stdout
+            if hasattr(self.args, 'encoding'):
+                try:
+                    sys.stdout.reconfigure(encoding=self.args.encoding)
+                except (AttributeError, io.UnsupportedOperation):
+                    pass
         else:
             self.output_file = output_file
 

@@ -78,7 +78,10 @@ class In2CSV(CSVKitUtility):
     def sheet_names(self, path, filetype):
         input_file = self.open_excel_input_file(path)
         if filetype == 'xls':
-            sheet_names = xlrd.open_workbook(file_contents=input_file.read()).sheet_names()
+            workbook_kwargs = {}
+            if self.args.encoding_xls:
+                workbook_kwargs['encoding_override'] = self.args.encoding_xls
+            sheet_names = xlrd.open_workbook(file_contents=input_file.read(), **workbook_kwargs).sheet_names()
         else:  # 'xlsx'
             sheet_names = openpyxl.load_workbook(input_file, read_only=True, data_only=True).sheetnames
         input_file.close()
