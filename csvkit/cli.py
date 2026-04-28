@@ -598,7 +598,7 @@ def _expand_args(args):
             matches = []
 
         if matches:
-            out.extend(matches)
+            out.extend(sorted(matches))
         else:
             out.append(arg)
 
