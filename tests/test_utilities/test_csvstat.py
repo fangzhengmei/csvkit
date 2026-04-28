@@ -169,3 +169,15 @@ class TestCSVStat(CSVKitTestCase, ColumnsTests, EmptyFileTests, NamesTests):
         ])
 
         self.assertEqual(output, '9,748.35\n')
+
+    def test_date_like_number_inferred_as_number(self):
+        output = self.get_output(['-c', '1', '--type', 'examples/date_like_number.csv'])
+        self.assertEqual(output, 'Number\n')
+
+    def test_numeric_date_format_inferred_as_number_without_format(self):
+        output = self.get_output(['-c', '1', '--type', 'examples/test_numeric_date_format.csv'])
+        self.assertEqual(output, 'Number\n')
+
+    def test_numeric_date_format_inferred_as_date_with_format(self):
+        output = self.get_output(['-c', '1', '--type', '--date-format', '%Y%m%d', 'examples/test_numeric_date_format.csv'])
+        self.assertEqual(output, 'Date\n')

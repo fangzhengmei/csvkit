@@ -193,3 +193,16 @@ class TestCSVFormatQuoteNonNumeric(CSVKitTestCase, EmptyFileTests):
         self.assertLines(['-U', '2', '-M', 'XYZ', 'examples/dummy.csv'], [
             '"a","b","c"XYZ1,2,3XYZ',
         ], newline_at_eof=False)
+
+    def test_date_like_number_inferred_as_number_with_quote_nonnumeric(self):
+        self.assertLines(['-U', '2', 'examples/date_like_number.csv'], [
+            '"a"',
+            '4.5',
+        ])
+
+    def test_numeric_date_format_inferred_as_number_with_quote_nonnumeric(self):
+        self.assertLines(['-U', '2', 'examples/test_numeric_date_format.csv'], [
+            '"a"',
+            '20140102',
+            '20121231',
+        ])

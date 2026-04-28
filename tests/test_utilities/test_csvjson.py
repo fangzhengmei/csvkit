@@ -230,3 +230,20 @@ class TestCSVJSON(CSVKitTestCase, EmptyFileTests):
             '{"type": "Feature", "properties": {"slug": "obeidder", "title": "Obeidder Monster", "description": "Sharpie and Spray Paint", "address": "3319 Seaton St.", "type": "Street Art", "photo_url": "http://i.imgur.com/3aX7E.jpg", "photo_credit": "Photo by Justin Edwards. Used with permission.", "last_seen_date": "4/15/12"}, "geometry": {"type": "Point", "coordinates": [-95.334619, 32.314431]}}',  # noqa: E501
             '{"type": "Feature", "properties": {"slug": "sensor-device", "title": "Sensor Device", "artist": "Kurt Dyrhaug", "address": "University of Texas, Campus Drive", "type": "Sculpture", "photo_url": "http://media.hacktyler.com/artmap/photos/sensor-device.jpg", "photo_credit": "Photo by Christopher Groskopf. Used with permission.", "last_seen_date": "4/16/12"}, "geometry": {"type": "Point", "coordinates": [-95.250699, 32.317216]}}',  # noqa: E501
         ])
+
+    def test_date_like_number_inferred_as_number(self):
+        js = json.loads(self.get_output(['examples/date_like_number.csv']))
+        self.assertEqual(js[0]['a'], 4.5)
+        self.assertIsInstance(js[0]['a'], float)
+
+    def test_numeric_date_format_inferred_as_number_without_format(self):
+        js = json.loads(self.get_output(['examples/test_numeric_date_format.csv']))
+        self.assertEqual(js[0]['a'], 20140102.0)
+        self.assertEqual(js[1]['a'], 20121231.0)
+        self.assertIsInstance(js[0]['a'], float)
+
+    def test_numeric_date_format_inferred_as_date_with_format(self):
+        js = json.loads(self.get_output(['--date-format', '%Y%m%d', 'examples/test_numeric_date_format.csv']))
+        self.assertEqual(js[0]['a'], '2014-01-02')
+        self.assertEqual(js[1]['a'], '2012-12-31')
+        self.assertIsInstance(js[0]['a'], str)

@@ -276,3 +276,20 @@ class TestCSVSQL(CSVKitTestCase, EmptyFileTests):
         self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'foo', 'examples/foo1.csv'])
         self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables',
                         'foo', 'examples/foo2.csv', '--create-if-not-exists'])
+
+    def test_date_like_number_inferred_as_decimal(self):
+        sql = self.get_output(['--tables', 'test', 'examples/date_like_number.csv'])
+        self.assertIn('DECIMAL', sql)
+        self.assertNotIn('DATE', sql)
+        self.assertNotIn('DATETIME', sql)
+
+    def test_numeric_date_format_inferred_as_decimal_without_format(self):
+        sql = self.get_output(['--tables', 'test', 'examples/test_numeric_date_format.csv'])
+        self.assertIn('DECIMAL', sql)
+        self.assertNotIn('DATE', sql)
+        self.assertNotIn('DATETIME', sql)
+
+    def test_numeric_date_format_inferred_as_date_with_format(self):
+        sql = self.get_output(['--tables', 'test', '--date-format', '%Y%m%d', 'examples/test_numeric_date_format.csv'])
+        self.assertIn('DATE', sql)
+        self.assertNotIn('DECIMAL', sql)
