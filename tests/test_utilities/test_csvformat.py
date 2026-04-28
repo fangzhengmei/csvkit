@@ -206,3 +206,12 @@ class TestCSVFormatQuoteNonNumeric(CSVKitTestCase, EmptyFileTests):
             '20140102',
             '20121231',
         ])
+
+    def test_actual_date_values_are_quoted_with_quote_nonnumeric(self):
+        self.assertLines(['-U', '2', 'examples/testfixed_converted.csv'], [
+            '"text","date","integer","boolean","float","time","datetime","empty_column"',
+            '"Chicago Reader","1971-01-01",40,"True",1.0,"4:14:00","1971-01-01T04:14:00",""',
+            '"Chicago Sun-Times","1948-01-01",63,"True",1.24,"14:57:13","1948-01-01T14:57:13",""',
+            '"Chicago Tribune","1920-01-01",164,"False",41800000.01,"0:00:00","1920-01-01T00:00:00",""',
+            '"Row with blanks","","","","","","",""',
+        ])
