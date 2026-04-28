@@ -20,6 +20,7 @@ import agate
 from agate.data_types.base import DEFAULT_NULL_VALUES
 
 from csvkit.exceptions import ColumnIdentifierError, RequiredHeaderError
+from csvkit.inference import get_type_tester
 
 try:
     import zstandard
@@ -350,43 +351,16 @@ class CSVKitUtility:
         sys.excepthook = handler
 
     def get_column_types(self):
-        if getattr(self.args, 'blanks', None):
-            type_kwargs = {'null_values': []}
-        else:
-            type_kwargs = {'null_values': list(DEFAULT_NULL_VALUES)}
-        for null_value in getattr(self.args, 'null_values', []):
-            type_kwargs['null_values'].append(null_value)
-
-        text_type = agate.Text(**type_kwargs)
-
-        if getattr(self.args, 'no_inference', None):
-            types = [text_type]
-        else:
-            number_type = agate.Number(
-                locale=self.args.locale, no_leading_zeroes=getattr(self.args, 'no_leading_zeroes', None), **type_kwargs
-            )
-
-            if getattr(self.args, 'out_quoting', None) == 2:  # QUOTE_NONUMERIC
-                types = [number_type, text_type]
-            else:
-                # See the order in the `agate.TypeTester` class.
-                types = [
-                    agate.Boolean(**type_kwargs),
-                    agate.TimeDelta(**type_kwargs),
-                    agate.Date(date_format=self.args.date_format, **type_kwargs),
-                    agate.DateTime(datetime_format=self.args.datetime_format, **type_kwargs),
-                    text_type,
-                ]
-
-                # In order to parse dates like "20010101".
-                if self.args.datetime_format:
-                    types.insert(-1, number_type)
-                elif self.args.date_format:
-                    types.insert(-2, number_type)
-                else:
-                    types.insert(1, number_type)
-
-        return agate.TypeTester(types=types)
+        return get_type_tester(
+            blanks=getattr(self.args, 'blanks', False),
+            null_values=getattr(self.args, 'null_values', []),
+            no_inference=getattr(self.args, 'no_inference', False),
+            locale=self.args.locale,
+            no_leading_zeroes=getattr(self.args, 'no_leading_zeroes', None),
+            date_format=getattr(self.args, 'date_format', None),
+            datetime_format=getattr(self.args, 'datetime_format', None),
+            quote_nonnumeric=getattr(self.args, 'out_quoting', None) == 2,
+        )
 
     def get_column_offset(self):
         if self.args.zero_based:
