@@ -69,6 +69,11 @@ OPERATIONS = OrderedDict([
 
 class CSVStat(CSVKitUtility):
     description = 'Print descriptive statistics for each column in a CSV file.'
+    default_groups = CSVKitUtility.default_groups + [
+        'names_option',
+        'snifflimit_option',
+        'no_inference_option',
+    ]
 
     def add_arguments(self):
         self.argparser.add_argument(
@@ -80,9 +85,6 @@ class CSVStat(CSVKitUtility):
         self.argparser.add_argument(
             '-i', '--indent', dest='indent', type=int,
             help='Indent the output JSON this many spaces. Disabled by default.')
-        self.argparser.add_argument(
-            '-n', '--names', dest='names_only', action='store_true',
-            help='Display column names and indices from the input CSV and exit.')
         self.argparser.add_argument(
             '-c', '--columns', dest='columns',
             help='A comma-separated list of column indices, names or ranges to be examined, e.g. "1,id,3-5". '
@@ -139,14 +141,6 @@ class CSVStat(CSVKitUtility):
         self.argparser.add_argument(
             '-G', '--no-grouping-separator', dest='no_grouping_separator', action='store_true',
             help='Do not use grouping separators in decimal numbers.')
-        self.argparser.add_argument(
-            '-y', '--snifflimit', dest='sniff_limit', type=int, default=1024,
-            help='Limit CSV dialect sniffing to the specified number of bytes. '
-                 'Specify "0" to disable sniffing entirely, or "-1" to sniff the entire file.')
-        self.argparser.add_argument(
-            '-I', '--no-inference', dest='no_inference', action='store_true',
-            help='Disable type inference (and --locale, --date-format, --datetime-format, --no-leading-zeroes) '
-                 'when parsing the input.')
 
     def main(self):
         if self.args.names_only:

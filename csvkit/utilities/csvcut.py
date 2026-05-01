@@ -19,11 +19,11 @@ from csvkit.cli import CSVKitUtility
 class CSVCut(CSVKitUtility):
     description = 'Filter and truncate CSV files. Like the Unix "cut" command, but for tabular data.'
     override_flags = ['L', 'I']
+    default_groups = CSVKitUtility.default_groups + [
+        'names_option',
+    ]
 
     def add_arguments(self):
-        self.argparser.add_argument(
-            '-n', '--names', dest='names_only', action='store_true',
-            help='Display column names and indices from the input CSV and exit.')
         self.argparser.add_argument(
             '-c', '--columns', dest='columns',
             help='A comma-separated list of column indices, names or ranges to be extracted, e.g. "1,id,3-5". '

@@ -10,8 +10,11 @@ from csvkit.cli import CSVKitUtility, isatty, match_column_identifier
 class CSVJoin(CSVKitUtility):
     description = 'Execute a SQL-like join to merge CSV files on a specified column or columns.'
     epilog = "Note that the join operation requires reading all files into memory. Don't try this on very large files."
-    # Override 'f' because the utility accepts multiple files.
     override_flags = ['f']
+    default_groups = CSVKitUtility.default_groups + [
+        'snifflimit_option',
+        'no_inference_option',
+    ]
 
     def add_arguments(self):
         self.argparser.add_argument(
@@ -33,14 +36,6 @@ class CSVJoin(CSVKitUtility):
             '--right', dest='right_join', action='store_true',
             help='Perform a right outer join, rather than the default inner join. If more than two files are provided '
                  'this will be executed as a sequence of right outer joins, starting at the right.')
-        self.argparser.add_argument(
-            '-y', '--snifflimit', dest='sniff_limit', type=int, default=1024,
-            help='Limit CSV dialect sniffing to the specified number of bytes. '
-                 'Specify "0" to disable sniffing entirely, or "-1" to sniff the entire file.')
-        self.argparser.add_argument(
-            '-I', '--no-inference', dest='no_inference', action='store_true',
-            help='Disable type inference (and --locale, --date-format, --datetime-format, --no-leading-zeroes) '
-                 'when parsing the input.')
 
     def main(self):
         if isatty(sys.stdin) and self.args.input_paths == ['-']:

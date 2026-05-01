@@ -258,9 +258,9 @@ COMMON_ARGUMENT_GROUPS = {
             },
         ],
     },
-    'column_selection_options': {
-        'title': 'Column selection options',
-        'description': 'Options for selecting columns.',
+    'names_option': {
+        'title': 'Column names option',
+        'description': 'Option for displaying column names.',
         'arguments': [
             {
                 'flags': ['-n', '--names'],
@@ -270,27 +270,11 @@ COMMON_ARGUMENT_GROUPS = {
                     'help': 'Display column names and indices from the input CSV and exit.',
                 },
             },
-            {
-                'flags': ['-c', '--columns'],
-                'kwargs': {
-                    'dest': 'columns',
-                    'help': 'A comma-separated list of column indices, names or ranges to be selected, e.g. "1,id,3-5". '
-                            'Defaults to all columns.',
-                },
-            },
-            {
-                'flags': ['-C', '--not-columns'],
-                'kwargs': {
-                    'dest': 'not_columns',
-                    'help': 'A comma-separated list of column indices, names or ranges to be excluded, e.g. "1,id,3-5". '
-                            'Defaults to no columns.',
-                },
-            },
         ],
     },
-    'data_processing_options': {
-        'title': 'Data processing options',
-        'description': 'Options for data processing with type inference.',
+    'snifflimit_option': {
+        'title': 'Sniff limit option',
+        'description': 'Option for CSV dialect sniffing.',
         'arguments': [
             {
                 'flags': ['-y', '--snifflimit'],
@@ -302,6 +286,12 @@ COMMON_ARGUMENT_GROUPS = {
                             'Specify "0" to disable sniffing entirely, or "-1" to sniff the entire file.',
                 },
             },
+        ],
+    },
+    'no_inference_option': {
+        'title': 'No inference option',
+        'description': 'Option for disabling type inference.',
+        'arguments': [
             {
                 'flags': ['-I', '--no-inference'],
                 'kwargs': {
@@ -310,6 +300,7 @@ COMMON_ARGUMENT_GROUPS = {
                     'help': 'Disable type inference (and --locale, --date-format, --datetime-format, --no-leading-zeroes) '
                             'when parsing the input.',
                 },
+                'flag': 'I',
             },
         ],
     },
