@@ -74,22 +74,26 @@ def add_output_dialect_arguments(parser):
 def extract_input_dialect_kwargs(args):
     kwargs = {}
 
-    field_size_limit = getattr(args, 'field_size_limit')
+    field_size_limit = getattr(args, 'field_size_limit', None)
     if field_size_limit is not None:
         csv.field_size_limit(field_size_limit)
 
-    if args.tabs:
+    tabs = getattr(args, 'tabs', False)
+    delimiter = getattr(args, 'delimiter', None)
+
+    if tabs:
         kwargs['delimiter'] = '\t'
-    elif args.delimiter:
-        kwargs['delimiter'] = args.delimiter
+    elif delimiter:
+        kwargs['delimiter'] = delimiter
 
     for arg in ('quotechar', 'quoting', 'doublequote', 'escapechar', 'skipinitialspace'):
-        value = getattr(args, arg)
+        value = getattr(args, arg, None)
         if value is not None:
             kwargs[arg] = value
 
-    if getattr(args, 'no_header_row', None):
-        kwargs['header'] = not args.no_header_row
+    no_header_row = getattr(args, 'no_header_row', None)
+    if no_header_row:
+        kwargs['header'] = not no_header_row
 
     return kwargs
 
@@ -100,17 +104,23 @@ def extract_output_dialect_kwargs(args):
     if getattr(args, 'line_numbers', None):
         kwargs['line_numbers'] = True
 
-    if getattr(args, 'out_asv', None):
-        kwargs['delimiter'] = '\x1f'
-    elif getattr(args, 'out_tabs', None):
-        kwargs['delimiter'] = '\t'
-    elif getattr(args, 'out_delimiter', None):
-        kwargs['delimiter'] = args.out_delimiter
+    out_asv = getattr(args, 'out_asv', False)
+    out_tabs = getattr(args, 'out_tabs', False)
+    out_delimiter = getattr(args, 'out_delimiter', None)
 
-    if getattr(args, 'out_asv', None):
+    if out_asv:
+        kwargs['delimiter'] = '\x1f'
+    elif out_tabs:
+        kwargs['delimiter'] = '\t'
+    elif out_delimiter:
+        kwargs['delimiter'] = out_delimiter
+
+    out_lineterminator = getattr(args, 'out_lineterminator', None)
+
+    if out_asv:
         kwargs['lineterminator'] = '\x1e'
-    elif getattr(args, 'out_lineterminator', None):
-        kwargs['lineterminator'] = args.out_lineterminator
+    elif out_lineterminator:
+        kwargs['lineterminator'] = out_lineterminator
 
     for arg in ('quotechar', 'quoting', 'doublequote', 'escapechar'):
         value = getattr(args, f'out_{arg}', None)
