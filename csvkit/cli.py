@@ -19,7 +19,7 @@ from os.path import splitext
 import agate
 from agate.data_types.base import DEFAULT_NULL_VALUES
 
-from csvkit.exceptions import ColumnIdentifierError, RequiredHeaderError
+from csvkit.exceptions import ColumnIdentifierError, RequiredHeaderError, ErrorHandler
 
 try:
     import zstandard
@@ -130,23 +130,33 @@ class CSVKitUtility:
     def run(self):
         """
         A wrapper around the main loop of the utility which handles opening and
-        closing files.
+        closing files, and provides unified error handling for I/O exceptions.
+
+        Only I/O related exceptions are caught and handled by the unified error handler.
+        Application-level exceptions (like ColumnIdentifierError, RequiredHeaderError)
+        are allowed to propagate as before, maintaining compatibility with test code
+        that expects these exceptions to be raised directly.
         """
-        if 'f' not in self.override_flags:
-            self.input_file = self._open_input_file(self.args.input_path)
-
-        if getattr(self.args, 'add_bom', False):
-            self.output_file.buffer.write(BOM_UTF8)
-
         try:
-            with warnings.catch_warnings():
-                if getattr(self.args, 'no_header_row', None):
-                    warnings.filterwarnings(action='ignore', message='Column names not specified', module='agate')
-
-                self.main()
-        finally:
             if 'f' not in self.override_flags:
-                self.input_file.close()
+                self.input_file = self._open_input_file(self.args.input_path)
+
+            if getattr(self.args, 'add_bom', False):
+                self.output_file.buffer.write(BOM_UTF8)
+
+            try:
+                with warnings.catch_warnings():
+                    if getattr(self.args, 'no_header_row', None):
+                        warnings.filterwarnings(action='ignore', message='Column names not specified', module='agate')
+
+                    self.main()
+            finally:
+                if 'f' not in self.override_flags:
+                    self.input_file.close()
+        except SystemExit:
+            raise
+        except (UnicodeDecodeError, BrokenPipeError, OSError):
+            self._handle_exception(*sys.exc_info())
 
     def main(self):
         """
@@ -332,13 +342,12 @@ class CSVKitUtility:
     def _install_exception_handler(self):
         """
         Installs a replacement for sys.excepthook, which handles pretty-printing uncaught exceptions.
+        This is kept as a fallback for exceptions that occur outside of the run() method.
         """
         def handler(t, value, traceback):
             if self.args.verbose:
                 sys.__excepthook__(t, value, traceback)
             else:
-                # Special case handling for Unicode errors, which behave very strangely
-                # when cast with unicode()
                 if t == UnicodeDecodeError:
                     sys.stderr.write(
                         'Your file is not "%s" encoded. Please specify the correct encoding with the --encoding flag.'
@@ -348,6 +357,16 @@ class CSVKitUtility:
                     sys.stderr.write(f'{t.__name__}: {str(value)}\n')
 
         sys.excepthook = handler
+
+    def _handle_exception(self, exc_type, exc_value, exc_traceback):
+        """
+        Unified exception handler using the ErrorHandler class.
+        This method is called from run() when an exception is caught.
+        It provides consistent handling for I/O and related exceptions across all utilities.
+        """
+        error_handler = ErrorHandler(args=self.args, error_file=self.error_file)
+        exit_code = error_handler.handle_exception(exc_type, exc_value, exc_traceback)
+        sys.exit(exit_code)
 
     def get_column_types(self):
         if getattr(self.args, 'blanks', None):
