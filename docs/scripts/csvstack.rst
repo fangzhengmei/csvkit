@@ -29,8 +29,8 @@ Stack up the rows from multiple CSV files, optionally adding a grouping value to
                            to the output as a new column. You may specify a name
                            for the new column using the -n flag.
      -n GROUP_NAME, --group-name GROUP_NAME
-                           A name for the grouping column, e.g. "year". Only used
-                           when also specifying -g.
+                           A name for the grouping column, e.g. "year". Used with
+                           -g or --filenames.
      --filenames           Use the filename of each input file as its grouping
                            value. When specified, -g will be ignored.
 
@@ -54,3 +54,9 @@ Add a single column to the left of a CSV:
 .. code-block:: bash
 
    csvstack -n NEWCOL -g "" examples/dummy.csv
+
+Stack multiple files and add a column with their filenames using a custom column name:
+
+.. code-block:: bash
+
+   csvstack --filenames -n source examples/dummy.csv examples/dummy2.csv
