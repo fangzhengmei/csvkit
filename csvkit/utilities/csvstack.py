@@ -35,7 +35,7 @@ class CSVStack(CSVKitUtility):
                  'added to the output as a new column. You may specify a name for the new column using the -n flag.')
         self.argparser.add_argument(
             '-n', '--group-name', dest='group_name',
-            help='A name for the grouping column, e.g. "year". Only used when also specifying -g.')
+            help='A name for the grouping column, e.g. "year". Used with -g or --filenames.')
         self.argparser.add_argument(
             '--filenames', dest='group_by_filenames', action='store_true',
             help='Use the filename of each input file as its grouping value. When specified, -g will be ignored.')
