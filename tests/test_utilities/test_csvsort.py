@@ -189,3 +189,27 @@ class TestCSVSort(CSVKitTestCase, ColumnsTests, EmptyFileTests, NamesTests):
         test_order = ['name', 'file1', 'file2', 'file10', 'file12', 'File20']
         new_order = [str(r[0]) for r in reader]
         self.assertEqual(test_order, new_order)
+
+    def test_null_order_too_few_values(self):
+        self.assertError(
+            launch_new_instance,
+            ['-c', '1,2', '--null-order', 'first'],
+            'Number of null-order values (1) does not match number of sort keys (2). Sort keys are: "category", "subcategory". Please provide 2 null-order values (e.g. "--null-order first,first").',
+            args=['examples/test_multi_key_nulls.csv']
+        )
+
+    def test_null_order_too_many_values(self):
+        self.assertError(
+            launch_new_instance,
+            ['-c', '1,2', '--null-order', 'first,last,first'],
+            'Number of null-order values (3) does not match number of sort keys (2). Sort keys are: "category", "subcategory". Please provide 2 null-order values (e.g. "--null-order first,first").',
+            args=['examples/test_multi_key_nulls.csv']
+        )
+
+    def test_null_order_invalid_value(self):
+        self.assertError(
+            launch_new_instance,
+            ['-c', '1', '--null-order', 'invalid'],
+            'Invalid null order value: "invalid". Must be "first" or "last".',
+            args=['examples/test_multi_key_nulls.csv']
+        )

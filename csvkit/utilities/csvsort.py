@@ -133,7 +133,7 @@ class CSVSort(CSVKitUtility):
             help='Disable type inference (and --locale, --date-format, --datetime-format, --no-leading-zeroes) '
                  'when parsing the input.')
 
-    def _parse_null_order(self, null_order_str, num_keys):
+    def _parse_null_order(self, null_order_str, num_keys, columns=None):
         if not null_order_str:
             return ['last'] * num_keys
 
@@ -144,8 +144,20 @@ class CSVSort(CSVKitUtility):
                 self.argparser.error(f'Invalid null order value: "{item}". Must be "first" or "last".')
             null_order.append(item)
 
-        if len(null_order) < num_keys:
-            null_order = null_order + ['last'] * (num_keys - len(null_order))
+        num_null_order = len(null_order)
+        if num_null_order != num_keys:
+            if columns:
+                columns_str = ', '.join([f'"{c}"' for c in columns])
+                self.argparser.error(
+                    f'Number of null-order values ({num_null_order}) does not match number of sort keys ({num_keys}). '
+                    f'Sort keys are: {columns_str}. '
+                    f'Please provide {num_keys} null-order values (e.g. "--null-order {",".join(["first"]*num_keys)}").'
+                )
+            else:
+                self.argparser.error(
+                    f'Number of null-order values ({num_null_order}) does not match number of sort keys ({num_keys}). '
+                    f'Please provide {num_keys} null-order values (e.g. "--null-order {",".join(["first"]*num_keys)}").'
+                )
 
         return null_order
 
@@ -173,7 +185,8 @@ class CSVSort(CSVKitUtility):
         )
 
         key_list = list(key)
-        null_order = self._parse_null_order(self.args.null_order, len(key_list))
+        key_names = [table.column_names[idx] for idx in key_list]
+        null_order = self._parse_null_order(self.args.null_order, len(key_list), key_names)
 
         if self.args.ignore_case and self.args.natural_sort:
             key = ignore_case_sort(key_list, null_order=null_order, natural_sort=True)
