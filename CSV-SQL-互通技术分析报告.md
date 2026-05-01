@@ -964,6 +964,1070 @@ def test_no_inference(self):
 
 ---
 
+### 6.7 深入分析：agatesql 类型映射的源码实现
+
+本节深入分析 `agatesql` 扩展库如何将 agate 数据类型转换为 SQLAlchemy 列定义。所有源码均来自 `agatesql/table.py`。
+
+#### 6.7.1 类型映射表设计
+
+agatesql 使用**多层映射表**来处理类型转换，支持基础映射和方言特定覆盖。
+
+**核心映射表定义** (`agatesql/table.py:20-46`):
+
+```python
+# 基础类型映射（初始值为 None，后续动态填充）
+SQL_TYPE_MAP = {
+    agate.Boolean: None,      # 见 BOOLEAN_MAP
+    agate.Number: None,       # 见 NUMBER_MAP
+    agate.Date: DATE,         # 直接映射
+    agate.DateTime: None,     # 见 DATETIME_MAP
+    agate.TimeDelta: None,    # 见 INTERVAL_MAP
+    agate.Text: VARCHAR,      # 直接映射
+}
+
+# 方言特定映射表
+DATETIME_MAP = {
+    'mssql': DATETIME,        # MSSQL 使用 DATETIME 而非 TIMESTAMP
+}
+
+BOOLEAN_MAP = {
+    'mssql': BIT,             # MSSQL 使用 BIT 而非 BOOLEAN
+}
+
+NUMBER_MAP = {
+    'crate': FLOAT,           # CrateDB 使用 FLOAT
+    'sqlite': FLOAT,          # SQLite 使用 FLOAT（动态类型）
+}
+
+INTERVAL_MAP = {
+    'postgresql': POSTGRES_INTERVAL,   # PostgreSQL 专用 INTERVAL
+    'oracle': ORACLE_INTERVAL,          # Oracle 专用 INTERVAL
+}
+```
+
+**映射表设计分析**:
+
+| 设计策略 | 说明 |
+|----------|------|
+| **两层映射** | 基础映射 `SQL_TYPE_MAP` + 方言覆盖映射（如 `BOOLEAN_MAP`） |
+| **动态填充** | `SQL_TYPE_MAP` 中的 `None` 值在 `make_sql_table()` 中根据方言动态填充 |
+| **选择性覆盖** | 只有需要特殊处理的方言才在映射表中定义 |
+
+#### 6.7.2 动态类型选择机制
+
+**代码位置**: `agatesql/table.py:188-191`
+
+```python
+def make_sql_table(table, table_name, dialect=None, ...):
+    # ...
+    # 根据方言动态选择类型
+    SQL_TYPE_MAP[agate.Boolean] = BOOLEAN_MAP.get(dialect, BOOLEAN)
+    SQL_TYPE_MAP[agate.DateTime] = DATETIME_MAP.get(dialect, TIMESTAMP)
+    SQL_TYPE_MAP[agate.Number] = NUMBER_MAP.get(dialect, DECIMAL)
+    SQL_TYPE_MAP[agate.TimeDelta] = INTERVAL_MAP.get(dialect, Interval)
+    # ...
+```
+
+**方言类型选择流程图**:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│              agatesql 方言类型选择机制                                │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  输入: dialect = 'mssql'                                             │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  Boolean 类型选择:                                              │  │
+│  │                                                                  │  │
+│  │  BOOLEAN_MAP = {'mssql': BIT}                                  │  │
+│  │  BOOLEAN_MAP.get('mssql', BOOLEAN) → BIT                       │  │
+│  │                                                                  │  │
+│  │  结果: agate.Boolean ──► SQLAlchemy BIT                        │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  Number 类型选择:                                               │  │
+│  │                                                                  │  │
+│  │  NUMBER_MAP = {'crate': FLOAT, 'sqlite': FLOAT}              │  │
+│  │  NUMBER_MAP.get('mssql', DECIMAL) → DECIMAL                   │  │
+│  │                                                                  │  │
+│  │  结果: agate.Number ──► SQLAlchemy DECIMAL                    │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  方言类型映射表:                                                       │
+│  ┌─────────────┬───────────┬───────────┬──────────────────────┐  │
+│  │ agate 类型  │ 默认映射  │ 方言例外  │ 说明                 │  │
+│  ├─────────────┼───────────┼───────────┼──────────────────────┤  │
+│  │ Boolean     │ BOOLEAN   │ mssql→BIT │ MSSQL 无原生 BOOLEAN │  │
+│  │ Number      │ DECIMAL   │ crate→   │ 动态类型/浮点优化    │  │
+│  │             │           │ sqlite→  │                      │  │
+│  │             │           │ FLOAT     │                      │  │
+│  │ Date        │ DATE      │ 无        │ 标准 SQL 类型        │  │
+│  │ DateTime    │ TIMESTAMP │ mssql→   │ MSSQL 时间类型差异    │  │
+│  │             │           │ DATETIME  │                      │  │
+│  │ TimeDelta   │ Interval  │ postgresql│ 数据库专用 INTERVAL   │  │
+│  │             │           │ oracle→   │                      │  │
+│  │             │           │ 专用类型   │                      │  │
+│  │ Text        │ VARCHAR   │ 无        │ 标准 SQL 类型        │  │
+│  └─────────────┴───────────┴───────────┴──────────────────────┘  │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### 6.7.3 make_sql_column() 函数分析
+
+**代码位置**: `agatesql/table.py:150-177`
+
+```python
+def make_sql_column(column_name, column, sql_type_kwargs=None, 
+                    sql_column_kwargs=None, sql_column_type=None):
+    """
+    从 agate 列数据创建 SQLAlchemy Column。
+    
+    :param column_name: 列名
+    :param column: agate Column 对象
+    :param sql_type_kwargs: 传递给类型构造器的额外参数（如 length）
+    :param sql_column_kwargs: 传递给 Column 构造器的额外参数（如 nullable）
+    :param sql_column_type: 可选，覆盖自动类型推断
+    """
+    # 阶段1: 类型选择
+    if not sql_column_type:
+        for agate_type, sql_type in SQL_TYPE_MAP.items():
+            if isinstance(column.data_type, agate_type):
+                sql_column_type = sql_type
+                break
+    
+    if sql_column_type is None:
+        raise ValueError('Unsupported column type: %s' % column.data_type)
+    
+    # 阶段2: 参数准备
+    sql_type_kwargs = sql_type_kwargs or {}
+    sql_column_kwargs = sql_column_kwargs or {}
+    
+    # 阶段3: 创建 SQLAlchemy Column
+    return Column(column_name, sql_column_type(**sql_type_kwargs), **sql_column_kwargs)
+```
+
+**类型匹配机制详解**:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                 make_sql_column() 类型匹配流程                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  输入: column.data_type = agate.Number()                            │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  循环遍历 SQL_TYPE_MAP:                                         │  │
+│  │                                                                  │  │
+│  │  for agate_type, sql_type in SQL_TYPE_MAP.items():             │  │
+│  │                                                                  │  │
+│  │    第1次: agate_type = agate.Boolean                           │  │
+│  │           isinstance(Number(), Boolean) → False                │  │
+│  │                                                                  │  │
+│  │    第2次: agate_type = agate.Number                            │  │
+│  │           isinstance(Number(), Number) → True ✓                │  │
+│  │           sql_column_type = DECIMAL (或方言特定类型)            │  │
+│  │           break                                                 │  │
+│  │                                                                  │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  关键点:                                                              │
+│  - 使用 isinstance() 进行类型检查                                    │
+│  - 支持子类继承（如果 agate.Number 有子类）                          │
+│  - SQL_TYPE_MAP 的遍历顺序不影响结果（因为是精确匹配）                │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### 6.7.4 make_sql_table() 函数中的约束处理
+
+**代码位置**: `agatesql/table.py:180-238`
+
+这是最复杂的函数，处理：
+1. 元数据和表对象创建
+2. 方言类型动态选择
+3. 列级约束生成
+4. 唯一约束添加
+
+**核心逻辑分段分析**:
+
+```python
+def make_sql_table(table, table_name, dialect=None, db_schema=None, 
+                   constraints=True, unique_constraint=[],
+                   connection=None, min_col_len=1, col_len_multiplier=1):
+    """
+    从 agate Table 生成 SQLAlchemy Table。
+    """
+    # ============================================================
+    # 阶段1: 初始化元数据和表对象
+    # ============================================================
+    metadata = MetaData()
+    sql_table = Table(table_name, metadata, schema=db_schema)
+    
+    # ============================================================
+    # 阶段2: 根据方言动态填充 SQL_TYPE_MAP
+    # ============================================================
+    SQL_TYPE_MAP[agate.Boolean] = BOOLEAN_MAP.get(dialect, BOOLEAN)
+    SQL_TYPE_MAP[agate.DateTime] = DATETIME_MAP.get(dialect, TIMESTAMP)
+    SQL_TYPE_MAP[agate.Number] = NUMBER_MAP.get(dialect, DECIMAL)
+    SQL_TYPE_MAP[agate.TimeDelta] = INTERVAL_MAP.get(dialect, Interval)
+    
+    # ============================================================
+    # 阶段3: 逐列处理（核心约束逻辑）
+    # ============================================================
+    for column_name, column in table.columns.items():
+        sql_column_type = None
+        sql_type_kwargs = {}      # 传递给类型构造器（如 length, precision）
+        sql_column_kwargs = {}    # 传递给 Column 构造器（如 nullable）
+        
+        if constraints:
+            # --------------------------------------------------------
+            # 子阶段3a: Text 类型的 VARCHAR 长度处理
+            # --------------------------------------------------------
+            if isinstance(column.data_type, agate.Text) and dialect in ('ingres', 'mysql'):
+                # 计算最大长度 × 乘数
+                length = table.aggregate(agate.MaxLength(column_name)) * decimal.Decimal(col_len_multiplier)
+                
+                # MySQL 和 Ingres 有 VARCHAR 最大长度限制
+                if (
+                    # MySQL: 65535 bytes / 3 bytes/char ≈ 21844 字符
+                    dialect == 'mysql' and length > 21844
+                    # Ingres: 32000 bytes / 3 bytes/char ≈ 10666 字符
+                    or dialect == 'ingres' and length > 10666
+                ):
+                    # 超过限制，使用 TEXT 类型
+                    sql_column_type = TEXT
+                else:
+                    # 应用最小长度限制
+                    sql_type_kwargs['length'] = length if length >= min_col_len else min_col_len
+            
+            # --------------------------------------------------------
+            # 子阶段3b: Number 类型的精度处理
+            # --------------------------------------------------------
+            if isinstance(column.data_type, agate.Number) and dialect in ('ingres', 'mssql', 'mysql', 'oracle'):
+                # 这些数据库需要显式指定 precision 和 scale
+                sql_type_kwargs['precision'] = 38  # 最大精度
+                # 计算最大小数位数
+                sql_type_kwargs['scale'] = table.aggregate(agate.MaxPrecision(column_name))
+            
+            # --------------------------------------------------------
+            # 子阶段3c: NULL 约束处理
+            # --------------------------------------------------------
+            # 注意: DateTime 类型除外（避免 MySQL NO_ZERO_DATE 模式问题）
+            if not isinstance(column.data_type, agate.DateTime):
+                # 检查该列是否包含 null 值
+                sql_column_kwargs['nullable'] = table.aggregate(agate.HasNulls(column_name))
+        
+        # --------------------------------------------------------
+        # 子阶段3d: 创建列并添加到表
+        # --------------------------------------------------------
+        sql_table.append_column(make_sql_column(column_name, column,
+                                sql_type_kwargs, sql_column_kwargs, sql_column_type))
+    
+    # ============================================================
+    # 阶段4: 添加唯一约束
+    # ============================================================
+    if unique_constraint:
+        sql_table.append_constraint(UniqueConstraint(*unique_constraint))
+    
+    return sql_table
+```
+
+**约束处理流程图**:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│              make_sql_table() 约束处理流程                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  输入: agate Table + constraints=True                                │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  对每列执行以下检查:                                            │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                              │                                       │
+│          ┌───────────────────┼───────────────────┐                │
+│          │                   │                   │                │
+│          ▼                   ▼                   ▼                │
+│  ┌───────────────┐   ┌───────────────┐   ┌───────────────┐      │
+│  │ Text 类型?    │   │ Number 类型?  │   │ 其他类型?     │      │
+│  │ (MySQL/Ingres)│   │ (需要精度)    │   │               │      │
+│  └───────┬───────┘   └───────┬───────┘   └───────┬───────┘      │
+│          │                   │                   │                │
+│          ▼                   ▼                   ▼                │
+│  ┌───────────────┐   ┌───────────────┐   ┌───────────────┐      │
+│  │ 计算 MaxLength │   │ 设置 precision│   │ 检查 HasNulls │      │
+│  │ × col_len_    │   │ = 38         │   │               │      │
+│  │ multiplier    │   │               │   │               │      │
+│  │               │   │ 计算          │   │ nullable =    │      │
+│  │ 超过限制?     │   │ MaxPrecision  │   │ HasNulls(...) │      │
+│  └───────┬───────┘   │ = scale      │   │               │      │
+│          │           └───────┬───────┘   └───────┬───────┘      │
+│     ┌────┴────┐             │                   │                │
+│     │         │             │                   │                │
+│     ▼         ▼             │                   │                │
+│  ┌──────┐ ┌──────┐         │                   │                │
+│  │ TEXT │ │VARCHAR│         │                   │                │
+│  │(超长)│ │(length│         │                   │                │
+│  │      │ │  =n) │         │                   │                │
+│  └──────┘ └──────┘         │                   │                │
+│                             │                   │                │
+│                             └───────────┬───────┘                │
+│                                         │                        │
+│                                         ▼                        │
+│                              ┌─────────────────────┐             │
+│                              │  调用 make_sql_column│             │
+│                              │  创建 SQLAlchemy   │             │
+│                              │  Column 对象        │             │
+│                              └───────────┬─────────┘             │
+│                                          │                       │
+│                                          ▼                       │
+│                              ┌─────────────────────┐             │
+│                              │  append_column 到   │             │
+│                              │  sql_table          │             │
+│                              └─────────────────────┘             │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**关键约束规则总结**:
+
+| 约束类型 | 触发条件 | 计算方式 |
+|----------|----------|----------|
+| **VARCHAR 长度** | Text 类型 + MySQL/Ingres | `MaxLength(col) × col_len_multiplier`，最小 `min_col_len` |
+| **TEXT 降级** | Text 类型 + 长度超限 | MySQL > 21844, Ingres > 10666 |
+| **DECIMAL 精度** | Number 类型 + 需显式精度的数据库 | `precision=38`, `scale=MaxPrecision(col)` |
+| **NOT NULL** | 非 DateTime 类型 | `nullable=HasNulls(col)`（有 null 则允许，否则 NOT NULL） |
+| **UNIQUE** | 指定 `unique_constraint` | `UniqueConstraint(*cols)` |
+
+**重要设计决策**:
+
+1. **DateTime 排除在 HasNulls 检查之外**
+   - 原因: MySQL 的 `NO_ZERO_DATE` SQL 模式会拒绝 `'0000-00-00'`
+   - 影响: DateTime 列总是允许 NULL
+
+2. **VARCHAR 长度限制的方言特定处理**
+   - MySQL: 行大小限制 65535 字节，UTF-8 字符占 3 字节
+   - Ingres: 类似限制
+   - 策略: 超过限制自动降级为 TEXT
+
+3. **DECIMAL 精度的保守策略**
+   - 默认 `precision=38`（大多数数据库支持的最大值）
+   - `scale` 动态计算（实际数据中的最大小数位数）
+
+---
+
+### 6.8 深入分析：agate TypeTester 类型推断的回退机制
+
+本节深入分析 `agate` 的类型推断引擎如何处理同一列中的多类型候选，以及最终如何确定列类型。
+
+#### 6.8.1 TypeTester 核心算法
+
+**代码位置**: `agate/type_tester.py:76-131`
+
+```python
+class TypeTester:
+    def __init__(self, force={}, limit=None, types=None, null_values=DEFAULT_NULL_VALUES):
+        self._force = force      # 强制指定的列类型
+        self._limit = limit      # 采样行数限制
+        
+        # 类型推断顺序（优先级从高到低）
+        if types:
+            self._possible_types = types
+        else:
+            # 默认顺序：最具体 → 最通用
+            self._possible_types = [
+                Boolean(null_values=null_values),
+                Number(null_values=null_values),
+                TimeDelta(null_values=null_values),
+                Date(null_values=null_values),
+                DateTime(null_values=null_values),
+                Text(null_values=null_values)  # 兜底类型
+            ]
+    
+    def run(self, rows, column_names):
+        """
+        执行类型推断，返回每列的类型。
+        """
+        num_columns = len(column_names)
+        
+        # ============================================================
+        # 阶段1: 初始化假设集
+        # ============================================================
+        # 每列初始假设：所有类型都有可能
+        hypotheses = [set(self._possible_types) for i in range(num_columns)]
+        
+        # 处理强制指定的类型
+        force_indices = []
+        for name in self._force.keys():
+            try:
+                force_indices.append(column_names.index(name))
+            except ValueError:
+                warnings.warn('"%s" does not match any column.' % name)
+        
+        # ============================================================
+        # 阶段2: 采样限制处理
+        # ============================================================
+        if self._limit:
+            sample_rows = rows[:self._limit]
+        elif self._limit == 0:
+            # limit=0 表示禁用推断，全部视为 Text
+            text = Text()
+            return tuple([text] * num_columns)
+        else:
+            sample_rows = rows  # 使用全部数据
+        
+        # ============================================================
+        # 阶段3: 消去法核心循环
+        # ============================================================
+        for row in sample_rows:
+            for i in range(num_columns):
+                # 跳过强制指定的列
+                if i in force_indices:
+                    continue
+                
+                h = hypotheses[i]
+                
+                # 该列类型已确定（只剩一个候选），跳过
+                if len(h) == 1:
+                    continue
+                
+                # 对当前假设集中的每个类型进行测试
+                for column_type in copy(h):  # 使用 copy 避免遍历时修改
+                    if len(row) > i and not column_type.test(row[i]):
+                        # 测试失败，从假设集中移除
+                        h.remove(column_type)
+        
+        # ============================================================
+        # 阶段4: 最终类型选择
+        # ============================================================
+        column_types = []
+        
+        for i in range(num_columns):
+            # 强制指定的列
+            if i in force_indices:
+                column_types.append(self._force[column_names[i]])
+                continue
+            
+            h = hypotheses[i]
+            
+            # 按优先级顺序选择第一个剩余的类型
+            for t in self._possible_types:
+                if t in h:
+                    column_types.append(t)
+                    break
+        
+        return tuple(column_types)
+```
+
+#### 6.8.2 消去法算法详解
+
+**核心思想**: "消去法" + "优先级选择"
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│              TypeTester 消去法算法原理                                │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  初始状态 (每列的假设集):                                             │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  列0: {Boolean, Number, TimeDelta, Date, DateTime, Text}     │  │
+│  │  列1: {Boolean, Number, TimeDelta, Date, DateTime, Text}     │  │
+│  │  列2: {Boolean, Number, TimeDelta, Date, DateTime, Text}     │  │
+│  │  ...                                                           │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  处理每行数据:                                                        │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                                                                  │  │
+│  │  行0: ["1", "123.45", "2024-01-15"]                          │  │
+│  │                                                                  │  │
+│  │  列0="1":                                                       │  │
+│  │    Boolean.test("1") → True  ✓ (1 被视为 true)                │  │
+│  │    Number.test("1") → True   ✓                                 │  │
+│  │    Date.test("1") → False    ✗ （从假设集移除）                │  │
+│  │    ...                                                          │  │
+│  │    假设集变为: {Boolean, Number, Text}                         │  │
+│  │                                                                  │  │
+│  │  列1="123.45":                                                  │  │
+│  │    Boolean.test("123.45") → False  ✗ （移除）                 │  │
+│  │    Number.test("123.45") → True    ✓                          │  │
+│  │    Date.test("123.45") → False    ✗ （移除）                  │  │
+│  │    ...                                                          │  │
+│  │    假设集变为: {Number, Text}                                  │  │
+│  │                                                                  │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  最终选择阶段:                                                        │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                                                                  │  │
+│  │  优先级顺序: Boolean > Number > TimeDelta > Date > DateTime > Text│
+│  │                                                                  │  │
+│  │  列0假设集: {Boolean, Number, Text}                            │  │
+│  │    检查 Boolean: 在假设集中 → 选择 Boolean                      │  │
+│  │                                                                  │  │
+│  │  列1假设集: {Number, Text}                                     │  │
+│  │    检查 Boolean: 不在 → 检查 Number: 在 → 选择 Number          │  │
+│  │                                                                  │  │
+│  │  关键: 即使 Text 总是在假设集中（因为它是兜底），               │  │
+│  │       只要有更具体的类型剩余，就不会选择 Text                    │  │
+│  │                                                                  │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### 6.8.3 各数据类型的 test()/cast() 实现
+
+`test()` 方法是类型推断的核心，它调用 `cast()` 并捕获异常。
+
+**基类定义** (`agate/data_types/base.py:17-29`):
+
+```python
+def test(self, d):
+    """
+    测试一个值是否可以被转换为此类型。
+    这是 cast() 的薄包装，捕获 CastError 异常。
+    """
+    try:
+        self.cast(d)
+    except CastError:
+        return False
+    
+    return True
+```
+
+**各类型的 cast() 实现详解**:
+
+##### 1. Boolean 类型
+
+**代码位置**: `agate/data_types/boolean.py:32-60`
+
+```python
+DEFAULT_TRUE_VALUES = ('yes', 'y', 'true', 't', '1')
+DEFAULT_FALSE_VALUES = ('no', 'n', 'false', 'f', '0')
+
+def cast(self, d):
+    # None 直接返回
+    if d is None:
+        return d
+    
+    # 原生 bool 类型（注意：bool 是 int 的子类，所以先检查）
+    if type(d) is bool and type(d) is not int:
+        return d
+    
+    # 整数 1/0
+    if type(d) is int or isinstance(d, Decimal):
+        if d == 1:
+            return True
+        if d == 0:
+            return False
+    
+    # 字符串解析
+    if isinstance(d, str):
+        d = d.replace(',', '').strip()
+        d_lower = d.lower()
+        
+        # 空值检查
+        if d_lower in self.null_values:  # ['', 'na', 'n/a', 'none', 'null', '.']
+            return None
+        # True 值
+        if d_lower in self.true_values:   # ['yes', 'y', 'true', 't', '1']
+            return True
+        # False 值
+        if d_lower in self.false_values:  # ['no', 'n', 'false', 'f', '0']
+            return False
+    
+    # 都不匹配，抛出异常
+    raise CastError('Can not convert value %s to bool.' % d)
+```
+
+**Boolean 能识别的值**:
+
+| 输入值 | 结果 | 说明 |
+|--------|------|------|
+| `True` | `True` | 原生布尔值 |
+| `False` | `False` | 原生布尔值 |
+| `1` (int) | `True` | 整数 1 |
+| `0` (int) | `False` | 整数 0 |
+| `"1"` | `True` | 字符串 "1" |
+| `"0"` | `False` | 字符串 "0" |
+| `"yes"`, `"YES"`, `"y"` | `True` | 不区分大小写 |
+| `"no"`, `"NO"`, `"n"` | `False` | 不区分大小写 |
+| `"true"`, `"t"` | `True` | |
+| `"false"`, `"f"` | `False` | |
+| `""` (空字符串) | `None` | 视为 null |
+| `"na"`, `"n/a"` | `None` | 视为 null |
+| `"2"` | **CastError** | 不是有效的布尔值 |
+
+##### 2. Number 类型
+
+**代码位置**: `agate/data_types/number.py:54-106`
+
+```python
+def cast(self, d):
+    # 原生类型
+    if isinstance(d, Decimal) or d is None:
+        return d
+    if type(d) is int:
+        return Decimal(d)
+    if type(d) is float:
+        return Decimal(repr(d))  # 使用 repr 避免精度问题
+    if d is False:
+        return Decimal(0)
+    if d is True:
+        return Decimal(1)
+    if not isinstance(d, str):
+        raise CastError('Can not parse value "%s" as Decimal.' % d)
+    
+    d = d.strip()
+    
+    # 空值检查
+    if d.lower() in self.null_values:
+        return None
+    
+    # 移除百分号
+    d = d.strip('%')
+    
+    # 处理符号
+    if len(d) > 0 and d[0] == '-':
+        d = d[1:]
+        sign = NEGATIVE
+    else:
+        sign = POSITIVE
+    
+    # 移除货币符号
+    for symbol in self.currency_symbols:
+        d = d.strip(symbol)
+    
+    # 处理千位分隔符和小数点（根据 locale）
+    d = d.replace(self.group_symbol, '')
+    d = d.replace(self.decimal_symbol, '.')
+    
+    # 前导零检查（如果启用）
+    if self.no_leading_zeroes and len(d) > 1 and d[0] == '0' and d[1] != '.':
+        raise CastError('Can not parse value "%s" as Decimal without leading zeroes' % d)
+    
+    # 最终解析
+    try:
+        return Decimal(d) * sign
+    except (InvalidOperation, ValueError):
+        pass
+    
+    raise CastError('Can not parse value "%s" as Decimal.' % d)
+```
+
+**Number 能识别的值**:
+
+| 输入值 | 结果 | 说明 |
+|--------|------|------|
+| `123` (int) | `Decimal('123')` | 整数 |
+| `123.45` (float) | `Decimal('123.45')` | 浮点数（使用 repr 避免精度问题） |
+| `"123.45"` | `Decimal('123.45')` | 字符串数字 |
+| `"1,234.56"` (en_US) | `Decimal('1234.56')` | 千位分隔符 |
+| `"1.234,56"` (de_DE) | `Decimal('1234.56')` | 欧洲格式 |
+| `"$123.45"` | `Decimal('123.45')` | 货币符号 |
+| `"123.45%"` | `Decimal('123.45')` | 百分号（仅移除，不除以 100） |
+| `"-123.45"` | `Decimal('-123.45')` | 负数 |
+| `""` | `None` | 空值 |
+| `"abc"` | **CastError** | 非数字 |
+
+##### 3. Date 类型
+
+**代码位置**: `agate/data_types/date.py:52-96`
+
+```python
+def cast(self, d):
+    if type(d) is date or d is None:
+        return d
+    
+    if isinstance(d, str):
+        d = d.strip()
+        
+        if d.lower() in self.null_values:
+            return None
+    else:
+        raise CastError('Can not parse value "%s" as date.' % d)
+    
+    # 显式格式（如果指定）
+    if self.date_format:
+        orig_locale = None
+        if self.locale:
+            orig_locale = locale.getlocale(locale.LC_TIME)
+            locale.setlocale(locale.LC_TIME, (self.locale, 'UTF-8'))
+        
+        try:
+            dt = datetime.strptime(d, self.date_format)
+        except (ValueError, TypeError):
+            raise CastError('Value "%s" does not match date format.' % d)
+        finally:
+            if orig_locale:
+                locale.setlocale(locale.LC_TIME, orig_locale)
+        
+        return dt.date()
+    
+    # 自然语言解析（使用 parsedatetime）
+    try:
+        (value, ctx, _, _, matched_text), = self._parser.nlp(d, sourceTime=ZERO_DT)
+    except (TypeError, ValueError, OverflowError):
+        raise CastError('Value "%s" does not match date format.' % d)
+    else:
+        # 验证: 完全匹配且有日期无时间
+        if matched_text == d and ctx.hasDate and not ctx.hasTime:
+            return value.date()
+    
+    raise CastError('Can not parse value "%s" as date.' % d)
+```
+
+**Date 能识别的值**:
+
+| 输入值 | 结果 | 说明 |
+|--------|------|------|
+| `"2024-01-15"` | `date(2024, 1, 15)` | ISO 格式 |
+| `"01/15/2024"` | `date(2024, 1, 15)` | 美国格式 |
+| `"15-Jan-2024"` | `date(2024, 1, 15)` | 替代格式 |
+| `"January 15, 2024"` | `date(2024, 1, 15)` | 自然语言 |
+| `"today"` | 当前日期 | 相对日期 |
+| `"tomorrow"` | 明天日期 | 相对日期 |
+| `"2024-01-15 10:30"` | **CastError** | 包含时间 → 不是纯 Date |
+| `"abc"` | **CastError** | 无效日期 |
+
+**关键点**: Date 类型**拒绝**包含时间部分的值，这些值会留给 DateTime 类型处理。
+
+##### 4. DateTime 类型
+
+**代码位置**: `agate/data_types/date_time.py:58-118`
+
+```python
+def cast(self, d):
+    if isinstance(d, datetime.datetime) or d is None:
+        return d
+    if isinstance(d, datetime.date):
+        # 纯日期升级为 datetime（时间设为 00:00:00）
+        return datetime.datetime.combine(d, datetime.time(0, 0, 0))
+    
+    if isinstance(d, str):
+        d = d.strip()
+        
+        if d.lower() in self.null_values:
+            return None
+    else:
+        raise CastError('Can not parse value "%s" as datetime.' % d)
+    
+    # 显式格式
+    if self.datetime_format:
+        # ... 类似 Date 的处理
+        dt = datetime.datetime.strptime(d, self.datetime_format)
+        return dt
+    
+    # 自然语言解析
+    try:
+        (_, _, _, _, matched_text), = self._parser.nlp(d, sourceTime=self._source_time)
+    except Exception:
+        matched_text = None
+    else:
+        value, ctx = self._parser.parseDT(d, sourceTime=self._source_time, tzinfo=self.timezone)
+        
+        # 有日期有时间 → DateTime
+        if matched_text == d and ctx.hasDate and ctx.hasTime:
+            return value
+        # 只有日期 → 升级为 DateTime（时间设为 00:00:00）
+        if matched_text == d and ctx.hasDate and not ctx.hasTime:
+            return datetime.datetime.combine(value.date(), datetime.time.min)
+    
+    # ISO 8601 格式回退
+    try:
+        dt = isodate.parse_datetime(d)
+        return dt
+    except Exception:
+        pass
+    
+    raise CastError('Can not parse value "%s" as datetime.' % d)
+```
+
+**DateTime 能识别的值**:
+
+| 输入值 | 结果 | 说明 |
+|--------|------|------|
+| `"2024-01-15T10:30:45"` | `datetime(2024,1,15,10,30,45)` | ISO 8601 |
+| `"2024-01-15 10:30:45"` | 同上 | 空格分隔 |
+| `"01/15/2024 10:30 AM"` | 同上 | 12小时制 |
+| `"2024-01-15"` | `datetime(2024,1,15,0,0,0)` | 纯日期升级 |
+| `"now"` | 当前时间 | 相对时间 |
+
+**关键点**: DateTime 类型**接受**纯日期值（升级为时间 00:00:00），也接受完整日期时间。
+
+##### 5. TimeDelta 类型
+
+**代码位置**: `agate/data_types/time_delta.py:13-39`
+
+```python
+def cast(self, d):
+    if isinstance(d, datetime.timedelta) or d is None:
+        return d
+    
+    if isinstance(d, str):
+        d = d.strip()
+        
+        if d.lower() in self.null_values:
+            return None
+    else:
+        raise CastError('Can not parse value "%s" as timedelta.' % d)
+    
+    # 使用 pytimeparse 解析
+    try:
+        seconds = pytimeparse.parse(d)
+    except AttributeError:
+        seconds = None
+    
+    if seconds is None:
+        raise CastError('Can not parse value "%s" to as timedelta.' % d)
+    
+    return datetime.timedelta(seconds=seconds)
+```
+
+**TimeDelta 能识别的值**:
+
+| 输入值 | 结果 | 说明 |
+|--------|------|------|
+| `"1d"` | `timedelta(days=1)` | 1 天 |
+| `"2h30m"` | `timedelta(hours=2, minutes=30)` | 2小时30分 |
+| `"1:30:00"` | `timedelta(hours=1, minutes=30)` | HH:MM:SS 格式 |
+| `"3600"` | `timedelta(seconds=3600)` | 秒数 |
+
+##### 6. Text 类型（兜底）
+
+**代码位置**: `agate/data_types/text.py:17-32`
+
+```python
+def cast(self, d):
+    if d is None:
+        return d
+    
+    if isinstance(d, str):
+        if self.cast_nulls and d.strip().lower() in self.null_values:
+            return None
+    
+    # 任何值都能转为字符串
+    return str(d)
+```
+
+**关键点**: Text 类型**永远不会失败**，因为任何值都可以转为字符串。这就是为什么它是"兜底类型"。
+
+#### 6.8.4 类型推断边界案例分析
+
+让我们通过几个边界案例来理解类型推断的完整规则。
+
+**案例一：混合布尔值和数字**
+
+```
+CSV 数据:
+col1
+1
+0
+true
+false
+123
+```
+
+**推断过程**:
+
+```
+初始假设集: {Boolean, Number, TimeDelta, Date, DateTime, Text}
+
+处理 "1":
+  Boolean.test("1") → True  ✓
+  Number.test("1") → True   ✓
+  其他 → False
+  
+假设集: {Boolean, Number, Text}
+
+处理 "true":
+  Boolean.test("true") → True  ✓
+  Number.test("true") → False  ✗ (从假设集移除)
+  
+假设集: {Boolean, Text}
+
+最终选择: Boolean (优先级更高)
+```
+
+**结果**: `col1` 被推断为 **Boolean**
+
+**案例二：混合日期和日期时间**
+
+```
+CSV 数据:
+col1
+2024-01-15
+2024-01-16 10:30:00
+2024-01-17
+```
+
+**推断过程**:
+
+```
+初始假设集: {Boolean, Number, TimeDelta, Date, DateTime, Text}
+
+处理 "2024-01-15":
+  Date.test("2024-01-15") → True  ✓ (纯日期)
+  DateTime.test("2024-01-15") → True  ✓ (可升级)
+  其他 → False
+  
+假设集: {Date, DateTime, Text}
+
+处理 "2024-01-16 10:30:00":
+  Date.test("2024-01-16 10:30:00") → False  ✗ (包含时间，不是纯 Date)
+  DateTime.test("2024-01-16 10:30:00") → True  ✓
+  
+假设集: {DateTime, Text}  (Date 被移除)
+
+最终选择: DateTime
+```
+
+**结果**: `col1` 被推断为 **DateTime**（因为有一个值包含时间，Date 被消去）
+
+**案例三：完全不一致的数据**
+
+```
+CSV 数据:
+col1
+true
+123.45
+2024-01-15
+hello
+```
+
+**推断过程**:
+
+```
+初始假设集: {Boolean, Number, TimeDelta, Date, DateTime, Text}
+
+处理 "true":
+  Boolean → True
+  假设集: {Boolean, Number, Text}  (简化)
+
+处理 "123.45":
+  Boolean.test("123.45") → False  ✗  (移除)
+  Number.test("123.45") → True   ✓
+  
+假设集: {Number, Text}
+
+处理 "2024-01-15":
+  Number.test("2024-01-15") → False  ✗  (移除)
+  只剩 Text
+
+处理 "hello":
+  Text.test("hello") → True  ✓
+
+最终选择: Text
+```
+
+**结果**: `col1` 被推断为 **Text**（所有更具体的类型都被消去）
+
+#### 6.8.5 类型推断完整规则总结
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│              TypeTester 类型推断完整规则                              │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  规则1: 消去法原则                                                   │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  对每一行数据、每一列、每一个候选类型：                          │  │
+│  │    IF column_type.test(value) == False:                        │  │
+│  │        从假设集中移除该类型                                      │  │
+│  │                                                                  │  │
+│  │  含义: 一个值"否决"一个类型                                      │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  规则2: 优先级选择原则                                                │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  默认优先级顺序（从高到低）:                                    │  │
+│  │                                                                  │  │
+│  │  Boolean > Number > TimeDelta > Date > DateTime > Text        │  │
+│  │                                                                  │  │
+│  │  从假设集中选择优先级最高的剩余类型                              │  │
+│  │                                                                  │  │
+│  │  含义: "最具体类型获胜"                                          │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  规则3: Text 兜底原则                                                │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  Text.test() 永远返回 True                                     │  │
+│  │  因此 Text 永远不会被消去                                       │  │
+│  │  假设集最终至少包含 Text                                        │  │
+│  │                                                                  │  │
+│  │  含义: 任何数据都能被表示为文本                                  │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  规则4: Date/DateTime 边界规则                                       │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                                                                  │  │
+│  │  值包含时间部分:                                                 │  │
+│  │    Date.test() → False    (被消去)                             │  │
+│  │    DateTime.test() → True  (保留)                               │  │
+│  │                                                                  │  │
+│  │  值是纯日期:                                                     │  │
+│  │    Date.test() → True     (保留)                               │  │
+│  │    DateTime.test() → True  (保留，升级为 00:00:00)            │  │
+│  │                                                                  │  │
+│  │  含义: Date 比 DateTime "更具体"                                │  │
+│  │       除非有值包含时间，否则选择 Date                            │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  规则5: 采样限制原则                                                 │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                                                                  │  │
+│  │  limit > 0: 只使用前 N 行进行推断                               │  │
+│  │  limit = 0: 禁用推断，全部视为 Text                             │  │
+│  │  limit = None: 使用全部数据                                    │  │
+│  │                                                                  │  │
+│  │  风险: 采样限制可能导致错误推断                                 │  │
+│  │        (例如: 前 N 行都是数字，后续行有文本)                    │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### 6.8.6 类型推断与数据装载的边界
+
+理解类型推断后，数据装载阶段的类型边界就清晰了：
+
+| 阶段 | 可能的问题 | 边界条件 |
+|------|-----------|----------|
+| **类型推断** | 采样不足导致错误推断 | 后续行的值类型与推断类型不匹配 |
+| **类型映射** | 方言类型不支持 | 某些数据库不支持特定 SQL 类型 |
+| **数据插入** | 运行时转换失败 | 实际值无法插入目标列 |
+
+**典型失败场景**:
+
+```
+CSV 数据 (前3行都是布尔格式):
+col1
+1
+0
+1
+2   ← 第4行是"2"，不是有效的布尔值
+
+推断过程 (使用 limit=3):
+  假设集: {Boolean, Number, Text}
+  前3行都满足 Boolean.test()
+  最终选择: Boolean
+
+数据插入阶段:
+  插入 "2" 到 BOOLEAN 列 → 失败！
+  (因为 "2" 不是有效的布尔值)
+```
+
+**解决方案**:
+- 使用 `--no-inference` 全部视为 Text
+- 或增加 `--snifflimit`（即 TypeTester 的 limit）
+- 或手动指定列类型
+
+---
+
 ## 7. SQL 反向导出为 CSV 的流式处理
 
 ### 7.1 核心工具：sql2csv
