@@ -28,6 +28,308 @@ except ImportError:
 
 QUOTING_CHOICES = sorted(getattr(csv, name) for name in dir(csv) if name.startswith('QUOTE_'))
 
+COMMON_ARGUMENT_GROUPS = {
+    'input_options': {
+        'title': 'Input options',
+        'description': 'Options for reading input CSV files.',
+        'arguments': [
+            {
+                'flags': ['-d', '--delimiter'],
+                'kwargs': {
+                    'dest': 'delimiter',
+                    'help': 'Delimiting character of the input CSV file.',
+                },
+                'flag': 'd',
+            },
+            {
+                'flags': ['-t', '--tabs'],
+                'kwargs': {
+                    'dest': 'tabs',
+                    'action': 'store_true',
+                    'help': 'Specify that the input CSV file is delimited with tabs. Overrides "-d".',
+                },
+                'flag': 't',
+            },
+            {
+                'flags': ['-q', '--quotechar'],
+                'kwargs': {
+                    'dest': 'quotechar',
+                    'help': 'Character used to quote strings in the input CSV file.',
+                },
+                'flag': 'q',
+            },
+            {
+                'flags': ['-u', '--quoting'],
+                'kwargs': {
+                    'dest': 'quoting',
+                    'type': int,
+                    'choices': QUOTING_CHOICES,
+                    'help': 'Quoting style used in the input CSV file: 0 quote minimal, 1 quote all, '
+                            '2 quote non-numeric, 3 quote none.',
+                },
+                'flag': 'u',
+            },
+            {
+                'flags': ['-b', '--no-doublequote'],
+                'kwargs': {
+                    'dest': 'doublequote',
+                    'action': 'store_false',
+                    'help': 'Whether or not double quotes are doubled in the input CSV file.',
+                },
+                'flag': 'b',
+            },
+            {
+                'flags': ['-p', '--escapechar'],
+                'kwargs': {
+                    'dest': 'escapechar',
+                    'help': 'Character used to escape the delimiter if --quoting 3 ("quote none") is specified and to escape '
+                            'the QUOTECHAR if --no-doublequote is specified.',
+                },
+                'flag': 'p',
+            },
+            {
+                'flags': ['-z', '--maxfieldsize'],
+                'kwargs': {
+                    'dest': 'field_size_limit',
+                    'type': int,
+                    'help': 'Maximum length of a single field in the input CSV file.',
+                },
+                'flag': 'z',
+            },
+            {
+                'flags': ['-e', '--encoding'],
+                'kwargs': {
+                    'dest': 'encoding',
+                    'default': os.getenv('PYTHONIOENCODING', 'utf-8-sig'),
+                    'help': 'Specify the encoding of the input CSV file.',
+                },
+                'flag': 'e',
+            },
+            {
+                'flags': ['-L', '--locale'],
+                'kwargs': {
+                    'dest': 'locale',
+                    'default': 'en_US',
+                    'help': 'Specify the locale (en_US) of any formatted numbers.',
+                },
+                'flag': 'L',
+            },
+            {
+                'flags': ['-S', '--skipinitialspace'],
+                'kwargs': {
+                    'dest': 'skipinitialspace',
+                    'action': 'store_true',
+                    'help': 'Ignore whitespace immediately following the delimiter.',
+                },
+                'flag': 'S',
+            },
+        ],
+    },
+    'type_inference_options': {
+        'title': 'Type inference options',
+        'description': 'Options for controlling type inference.',
+        'arguments': [
+            {
+                'flags': ['--blanks'],
+                'kwargs': {
+                    'dest': 'blanks',
+                    'action': 'store_true',
+                    'help': 'Do not convert "", "na", "n/a", "none", "null", "." to NULL.',
+                },
+                'flag': 'I',
+            },
+            {
+                'flags': ['--null-value'],
+                'kwargs': {
+                    'dest': 'null_values',
+                    'nargs': '+',
+                    'default': [],
+                    'help': 'Convert this value to NULL. --null-value can be specified multiple times.',
+                },
+                'flag': 'I',
+            },
+            {
+                'flags': ['--date-format'],
+                'kwargs': {
+                    'dest': 'date_format',
+                    'help': 'Specify a strptime date format string like "%%m/%%d/%%Y".',
+                },
+                'flag': 'I',
+            },
+            {
+                'flags': ['--datetime-format'],
+                'kwargs': {
+                    'dest': 'datetime_format',
+                    'help': 'Specify a strptime datetime format string like "%%m/%%d/%%Y %%I:%%M %%p".',
+                },
+                'flag': 'I',
+            },
+            {
+                'flags': ['--no-leading-zeroes'],
+                'kwargs': {
+                    'dest': 'no_leading_zeroes',
+                    'action': 'store_true',
+                    'help': 'Do not convert a numeric value with leading zeroes to a number.',
+                },
+                'flag': 'I',
+            },
+        ],
+    },
+    'output_options': {
+        'title': 'Output options',
+        'description': 'Options for controlling output.',
+        'arguments': [
+            {
+                'flags': ['-l', '--linenumbers'],
+                'kwargs': {
+                    'dest': 'line_numbers',
+                    'action': 'store_true',
+                    'help': 'Insert a column of line numbers at the front of the output. Useful when piping to grep or as a '
+                            'simple primary key.',
+                },
+                'flag': 'l',
+            },
+            {
+                'flags': ['--add-bom'],
+                'kwargs': {
+                    'dest': 'add_bom',
+                    'action': 'store_true',
+                    'help': 'Add the UTF-8 byte-order mark (BOM) to the output, for Excel compatibility',
+                },
+                'flag': 'add-bom',
+            },
+        ],
+    },
+    'input_output_options': {
+        'title': 'Input/Output options',
+        'description': 'Options affecting both input and output.',
+        'arguments': [
+            {
+                'flags': ['--zero'],
+                'kwargs': {
+                    'dest': 'zero_based',
+                    'action': 'store_true',
+                    'help': 'When interpreting or displaying column numbers, use zero-based numbering instead of the default '
+                            '1-based numbering.',
+                },
+                'flag': 'zero',
+            },
+        ],
+    },
+    'file_input_options': {
+        'title': 'File input options',
+        'description': 'Options for specifying input files.',
+        'arguments': [
+            {
+                'flags': [],
+                'kwargs': {
+                    'metavar': 'FILE',
+                    'nargs': '?',
+                    'dest': 'input_path',
+                    'help': 'The CSV file to operate on. If omitted, will accept input as piped data via STDIN.',
+                },
+                'flag': 'f',
+            },
+        ],
+    },
+    'header_row_options': {
+        'title': 'Header row options',
+        'description': 'Options for handling header rows.',
+        'arguments': [
+            {
+                'flags': ['-H', '--no-header-row'],
+                'kwargs': {
+                    'dest': 'no_header_row',
+                    'action': 'store_true',
+                    'help': 'Specify that the input CSV file has no header row. Will create default headers (a,b,c,...).',
+                },
+                'flag': 'H',
+            },
+            {
+                'flags': ['-K', '--skip-lines'],
+                'kwargs': {
+                    'dest': 'skip_lines',
+                    'type': int,
+                    'default': 0,
+                    'help': 'Specify the number of initial lines to skip before the header row (e.g. comments, copyright '
+                            'notices, empty rows).',
+                },
+                'flag': 'K',
+            },
+        ],
+    },
+    'column_selection_options': {
+        'title': 'Column selection options',
+        'description': 'Options for selecting columns.',
+        'arguments': [
+            {
+                'flags': ['-n', '--names'],
+                'kwargs': {
+                    'dest': 'names_only',
+                    'action': 'store_true',
+                    'help': 'Display column names and indices from the input CSV and exit.',
+                },
+            },
+            {
+                'flags': ['-c', '--columns'],
+                'kwargs': {
+                    'dest': 'columns',
+                    'help': 'A comma-separated list of column indices, names or ranges to be selected, e.g. "1,id,3-5". '
+                            'Defaults to all columns.',
+                },
+            },
+            {
+                'flags': ['-C', '--not-columns'],
+                'kwargs': {
+                    'dest': 'not_columns',
+                    'help': 'A comma-separated list of column indices, names or ranges to be excluded, e.g. "1,id,3-5". '
+                            'Defaults to no columns.',
+                },
+            },
+        ],
+    },
+    'data_processing_options': {
+        'title': 'Data processing options',
+        'description': 'Options for data processing with type inference.',
+        'arguments': [
+            {
+                'flags': ['-y', '--snifflimit'],
+                'kwargs': {
+                    'dest': 'sniff_limit',
+                    'type': int,
+                    'default': 1024,
+                    'help': 'Limit CSV dialect sniffing to the specified number of bytes. '
+                            'Specify "0" to disable sniffing entirely, or "-1" to sniff the entire file.',
+                },
+            },
+            {
+                'flags': ['-I', '--no-inference'],
+                'kwargs': {
+                    'dest': 'no_inference',
+                    'action': 'store_true',
+                    'help': 'Disable type inference (and --locale, --date-format, --datetime-format, --no-leading-zeroes) '
+                            'when parsing the input.',
+                },
+            },
+        ],
+    },
+    'verbose_option': {
+        'title': 'Verbose option',
+        'description': 'Option for verbose output.',
+        'arguments': [
+            {
+                'flags': ['-v', '--verbose'],
+                'kwargs': {
+                    'dest': 'verbose',
+                    'action': 'store_true',
+                    'help': 'Print detailed tracebacks when errors occur.',
+                },
+                'flag': 'v',
+            },
+        ],
+    },
+}
+
 
 class LazyFile:
     """
@@ -73,6 +375,15 @@ class CSVKitUtility:
     description = ''
     epilog = ''
     override_flags = ''
+    default_groups = [
+        'file_input_options',
+        'input_options',
+        'type_inference_options',
+        'header_row_options',
+        'verbose_option',
+        'output_options',
+        'input_output_options',
+    ]
 
     def __init__(self, args=None, output_file=None, error_file=None):
         """
@@ -118,6 +429,34 @@ class CSVKitUtility:
         except (ImportError, AttributeError):
             # Do nothing on platforms that don't have signals or don't have SIGPIPE
             pass
+
+    def _add_argument_group(self, group_name):
+        """
+        Add a pre-defined argument group to the parser.
+        """
+        if group_name not in COMMON_ARGUMENT_GROUPS:
+            return None
+
+        group_config = COMMON_ARGUMENT_GROUPS[group_name]
+        group = self.argparser.add_argument_group(
+            title=group_config['title'],
+            description=group_config['description'],
+        )
+
+        for arg_config in group_config['arguments']:
+            flag = arg_config.get('flag')
+            if flag and flag in self.override_flags:
+                continue
+
+            flags = arg_config['flags']
+            kwargs = arg_config['kwargs'].copy()
+
+            if flags:
+                group.add_argument(*flags, **kwargs)
+            else:
+                group.add_argument(**kwargs)
+
+        return group
 
     def add_arguments(self):
         """
@@ -167,100 +506,8 @@ class CSVKitUtility:
             prog=type(self).__name__.lower(), description=self.description, epilog=self.epilog
         )
 
-        # Input
-        if 'f' not in self.override_flags:
-            self.argparser.add_argument(
-                metavar='FILE', nargs='?', dest='input_path',
-                help='The CSV file to operate on. If omitted, will accept input as piped data via STDIN.')
-        if 'd' not in self.override_flags:
-            self.argparser.add_argument(
-                '-d', '--delimiter', dest='delimiter',
-                help='Delimiting character of the input CSV file.')
-        if 't' not in self.override_flags:
-            self.argparser.add_argument(
-                '-t', '--tabs', dest='tabs', action='store_true',
-                help='Specify that the input CSV file is delimited with tabs. Overrides "-d".')
-        if 'q' not in self.override_flags:
-            self.argparser.add_argument(
-                '-q', '--quotechar', dest='quotechar',
-                help='Character used to quote strings in the input CSV file.')
-        if 'u' not in self.override_flags:
-            self.argparser.add_argument(
-                '-u', '--quoting', dest='quoting', type=int, choices=QUOTING_CHOICES,
-                help='Quoting style used in the input CSV file: 0 quote minimal, 1 quote all, '
-                     '2 quote non-numeric, 3 quote none.')
-        if 'b' not in self.override_flags:
-            self.argparser.add_argument(
-                '-b', '--no-doublequote', dest='doublequote', action='store_false',
-                help='Whether or not double quotes are doubled in the input CSV file.')
-        if 'p' not in self.override_flags:
-            self.argparser.add_argument(
-                '-p', '--escapechar', dest='escapechar',
-                help='Character used to escape the delimiter if --quoting 3 ("quote none") is specified and to escape '
-                     'the QUOTECHAR if --no-doublequote is specified.')
-        if 'z' not in self.override_flags:
-            self.argparser.add_argument(
-                '-z', '--maxfieldsize', dest='field_size_limit', type=int,
-                help='Maximum length of a single field in the input CSV file.')
-        if 'e' not in self.override_flags:
-            self.argparser.add_argument(
-                '-e', '--encoding', dest='encoding', default=os.getenv('PYTHONIOENCODING', 'utf-8-sig'),
-                help='Specify the encoding of the input CSV file.')
-        if 'L' not in self.override_flags:
-            self.argparser.add_argument(
-                '-L', '--locale', dest='locale', default='en_US',
-                help='Specify the locale (en_US) of any formatted numbers.')
-        if 'S' not in self.override_flags:
-            self.argparser.add_argument(
-                '-S', '--skipinitialspace', dest='skipinitialspace', action='store_true',
-                help='Ignore whitespace immediately following the delimiter.')
-        if 'I' not in self.override_flags:
-            self.argparser.add_argument(
-                '--blanks', dest='blanks', action='store_true',
-                help='Do not convert "", "na", "n/a", "none", "null", "." to NULL.')
-            self.argparser.add_argument(
-                '--null-value', dest='null_values', nargs='+', default=[],
-                help='Convert this value to NULL. --null-value can be specified multiple times.')
-            self.argparser.add_argument(
-                '--date-format', dest='date_format',
-                help='Specify a strptime date format string like "%%m/%%d/%%Y".')
-            self.argparser.add_argument(
-                '--datetime-format', dest='datetime_format',
-                help='Specify a strptime datetime format string like "%%m/%%d/%%Y %%I:%%M %%p".')
-            self.argparser.add_argument(
-                '--no-leading-zeroes', dest='no_leading_zeroes', action='store_true',
-                help='Do not convert a numeric value with leading zeroes to a number.')
-        if 'H' not in self.override_flags:
-            self.argparser.add_argument(
-                '-H', '--no-header-row', dest='no_header_row', action='store_true',
-                help='Specify that the input CSV file has no header row. Will create default headers (a,b,c,...).')
-        if 'K' not in self.override_flags:
-            self.argparser.add_argument(
-                '-K', '--skip-lines', dest='skip_lines', type=int, default=0,
-                help='Specify the number of initial lines to skip before the header row (e.g. comments, copyright '
-                     'notices, empty rows).')
-        if 'v' not in self.override_flags:
-            self.argparser.add_argument(
-                '-v', '--verbose', dest='verbose', action='store_true',
-                help='Print detailed tracebacks when errors occur.')
-
-        # Output
-        if 'l' not in self.override_flags:
-            self.argparser.add_argument(
-                '-l', '--linenumbers', dest='line_numbers', action='store_true',
-                help='Insert a column of line numbers at the front of the output. Useful when piping to grep or as a '
-                     'simple primary key.')
-        if 'add-bom' not in self.override_flags:
-            self.argparser.add_argument(
-                '--add-bom', dest='add_bom', action='store_true',
-                help='Add the UTF-8 byte-order mark (BOM) to the output, for Excel compatibility')
-
-        # Input/Output
-        if 'zero' not in self.override_flags:
-            self.argparser.add_argument(
-                '--zero', dest='zero_based', action='store_true',
-                help='When interpreting or displaying column numbers, use zero-based numbering instead of the default '
-                     '1-based numbering.')
+        for group_name in self.default_groups:
+            self._add_argument_group(group_name)
 
         self.argparser.add_argument(
             '-V', '--version', action='version', version='%(prog)s 2.2.0',
