@@ -1,0 +1,5 @@
+slug,title,latitude,longitude
+null1,Null Island,0.0,0.0
+valid1,Valid Point,32.35066,-95.30181
+null2,Zero Lat Only,0.0,-95.30181
+null3,Zero Lon Only,32.35066,0.0

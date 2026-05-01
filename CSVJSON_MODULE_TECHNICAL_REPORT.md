@@ -1535,7 +1535,363 @@ csvjson --lat lat --lon lon spatial_data.csv > output.geojson
 # 无效行的 geometry 为 null，不影响其他行
 ```
 
-## 七、附录
+## 七、边界场景问题的确定性结论核查
+
+### 7.1 边界框计算中的空几何安全性问题
+
+#### 7.1.1 问题背景
+
+在第六章的分析中，我们指出了一个潜在问题：当 `feature['geometry']` 为 `None` 时，`GeoJsonBounds.add_feature()` 方法中的条件检查可能抛出 `TypeError`。
+
+**相关代码** [csvjson.py:267-269]：
+```python
+def add_feature(self, feature):
+    if 'geometry' in feature and 'coordinates' in feature['geometry']:
+        self.update_coordinates(feature['geometry']['coordinates'])
+```
+
+#### 7.1.2 实际测试验证
+
+**测试用例** (`test_null_geo.csv`)：
+```csv
+slug,title,latitude,longitude
+valid1,Valid Point 1,32.35066,-95.30181
+invalid1,Invalid Coords,abc,def
+valid2,Valid Point 2,32.33396,-95.28174
+```
+
+**执行命令**：
+```bash
+python -m csvkit.utilities.csvjson --lat latitude --lon longitude examples/test_null_geo.csv
+```
+
+**实际输出**：
+```
+TypeError: argument of type 'NoneType' is not iterable
+```
+
+#### 7.1.3 问题根因分析
+
+**执行路径追踪**：
+1. `invalid1` 行的坐标值为 `"abc"` 和 `"def"`
+2. `geometry_for_row()` 尝试 `float("abc")`，抛出 `ValueError`
+3. 异常被捕获，`lon` 和 `lat` 被设为 `None`
+4. `if lon and lat:` 条件失败，`geometry_for_row()` 隐式返回 `None`
+5. `feature['geometry'] = None`
+6. 在 `generate_feature_collection()` 中调用 `bounds.add_feature(feature)`
+7. `'coordinates' in feature['geometry']` 即 `'coordinates' in None`
+8. Python 抛出 `TypeError: argument of type 'NoneType' is not iterable`
+
+**问题本质**：
+```python
+# 原始代码
+if 'geometry' in feature and 'coordinates' in feature['geometry']:
+    ...
+
+# 当 feature['geometry'] 为 None 时
+'coordinates' in None  # TypeError!
+```
+
+Python 的 `in` 运算符要求右侧是可迭代对象，但 `None` 不是。
+
+#### 7.1.4 结论
+
+| 评估维度 | 结论 |
+|----------|------|
+| 问题性质 | **潜在缺陷**（Bug） |
+| 测试覆盖 | **测试盲区**（现有测试未覆盖） |
+| 影响范围 | 当数据中存在无效坐标行时，整个转换失败 |
+| 规避方案 | 使用 `--no-bbox` 参数禁用边界框计算 |
+
+**规避命令**：
+```bash
+# 使用 --no-bbox 可以绕过此问题
+csvjson --lat latitude --lon longitude --no-bbox examples/test_null_geo.csv
+```
+
+**建议修复**：
+```python
+# 修复方案1：显式检查 None
+def add_feature(self, feature):
+    geometry = feature.get('geometry')
+    if geometry is not None and 'coordinates' in geometry:
+        self.update_coordinates(geometry['coordinates'])
+
+# 修复方案2：使用 try-except
+def add_feature(self, feature):
+    try:
+        if 'geometry' in feature and 'coordinates' in feature['geometry']:
+            self.update_coordinates(feature['geometry']['coordinates'])
+    except TypeError:
+        pass  # 忽略无效的 geometry
+```
+
+---
+
+### 7.2 零坐标场景的有效性判断问题
+
+#### 7.2.1 问题背景
+
+代码中使用布尔短路方式检测坐标有效性：
+
+**相关代码** [csvjson.py:251-255]：
+```python
+if lon and lat:
+    return OrderedDict([
+        ('type', 'Point'),
+        ('coordinates', [lon, lat]),
+    ])
+```
+
+#### 7.2.2 实际测试验证
+
+**测试用例** (`test_zero_coords.csv`)：
+```csv
+slug,title,latitude,longitude
+null1,Null Island,0.0,0.0
+valid1,Valid Point,32.35066,-95.30181
+null2,Zero Lat Only,0.0,-95.30181
+null3,Zero Lon Only,32.35066,0.0
+```
+
+**执行命令**：
+```bash
+python -m csvkit.utilities.csvjson --lat latitude --lon longitude --no-bbox examples/test_zero_coords.csv
+```
+
+**实际输出**（格式化后）：
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "slug": "null1",
+        "title": "Null Island"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "slug": "valid1",
+        "title": "Valid Point"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-95.30181, 32.35066]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "slug": "null2",
+        "title": "Zero Lat Only"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "slug": "null3",
+        "title": "Zero Lon Only"
+      },
+      "geometry": null
+    }
+  ]
+}
+```
+
+#### 7.2.3 问题根因分析
+
+**Python 布尔短路行为**：
+```python
+# 测试 falsy 值
+if 0.0:
+    print("truthy")
+else:
+    print("falsy")  # 输出: falsy
+
+# 实际代码中的问题
+lon = 0.0
+lat = 0.0
+if lon and lat:  # 0.0 and 0.0 → 0.0 → falsy
+    # 不会执行到这里
+```
+
+**地理意义上的问题**：
+- 坐标 `(0.0, 0.0)` 是真实存在的地理位置（Null Island，位于几内亚湾）
+- 坐标 `(0.0, -95.30181)` 表示赤道上的某一点
+- 坐标 `(32.35066, 0.0)` 表示本初子午线上的某一点
+
+这些都是有效的地理坐标，但被代码错误地判定为无效。
+
+#### 7.2.4 测试覆盖与文档检查
+
+**现有测试用例分析**：
+- 搜索 `test_csvjson.py` 未发现零坐标相关测试
+- 搜索代码库未发现 `null.*island` 或 `zero.*coord` 相关文档
+- 没有任何注释或文档说明此行为
+
+**边界框计算的连锁影响**：
+当零坐标被判定为无效时，`geometry` 为 `None`，这又会触发 7.1 节中的 `TypeError` 问题（除非使用 `--no-bbox`）。
+
+#### 7.2.5 结论
+
+| 评估维度 | 结论 |
+|----------|------|
+| 问题性质 | **设计缺陷**（非预期行为） |
+| 测试覆盖 | **测试盲区** |
+| 影响范围 | 所有包含零坐标的地理数据都会丢失几何信息 |
+| 设计意图 | 可能是为了区分"未设置"和"零值"，但这种区分在地理坐标场景下不适用 |
+
+**建议修复**：
+```python
+# 修复方案：使用显式 None 检查
+if lon is not None and lat is not None:
+    return OrderedDict([
+        ('type', 'Point'),
+        ('coordinates', [lon, lat]),
+    ])
+```
+
+**注意**：修复后需要考虑空字符串 `""` 转换为 `float` 的情况。当前代码中：
+- `float("")` 会抛出 `ValueError`
+- 异常被捕获后 `lon` 和 `lat` 被设为 `None`
+- 所以修复后的代码仍然安全
+
+---
+
+### 7.3 流式模式下行结构不一致的实际行为
+
+#### 7.3.1 问题背景
+
+当输入 CSV 中某些行的列数与表头不一致时，流式模式和非流式模式的行为可能不同。
+
+#### 7.3.2 实际测试验证
+
+**测试用例** (`test_ragged_rows.csv`)：
+```csv
+a,b,c,d
+1,2,3,4
+5,6,7
+8,9
+10
+11,12,13,14,15
+```
+
+**行结构分析**：
+| 行号 | 内容 | 列数 | 与表头比较 |
+|------|------|------|-----------|
+| 1 (数据) | `1,2,3,4` | 4 列 | 匹配 |
+| 2 | `5,6,7` | 3 列 | 少 1 列 |
+| 3 | `8,9` | 2 列 | 少 2 列 |
+| 4 | `10` | 1 列 | 少 3 列 |
+| 5 | `11,12,13,14,15` | 5 列 | 多 1 列 |
+
+#### 7.3.3 流式模式测试
+
+**执行命令**：
+```bash
+python -m csvkit.utilities.csvjson --stream --no-inference --snifflimit 0 examples/test_ragged_rows.csv
+```
+
+**实际输出**：
+```json
+{"a": "1", "b": "2", "c": "3", "d": "4"}
+{"a": "5", "b": "6", "c": "7", "d": null}
+{"a": "8", "b": "9", "c": null, "d": null}
+{"a": "10", "b": null, "c": null, "d": null}
+{"a": "11", "b": "12", "c": "13", "d": "14"}
+```
+
+#### 7.3.4 非流式模式测试
+
+**执行命令**：
+```bash
+python -m csvkit.utilities.csvjson examples/test_ragged_rows.csv
+```
+
+**实际输出**：
+```
+RuntimeWarning: Error sniffing CSV dialect: Could not determine delimiter
+ValueError: Row 4 has 5 values, but Table only has 4 columns.
+```
+
+#### 7.3.5 代码执行路径分析
+
+**流式模式实现** [csvjson.py:142-153]：
+```python
+def streaming_output_ndjson(self):
+    rows = agate.csv.reader(self.input_file, **self.reader_kwargs)
+    column_names = next(rows)  # ['a', 'b', 'c', 'd']
+
+    for row in rows:
+        data = OrderedDict()
+        for i, column in enumerate(column_names):  # 只遍历 4 次
+            try:
+                data[column] = row[i]
+            except IndexError:
+                data[column] = None  # 列数不足时设为 None
+        self.dump_json(data, newline=True)
+```
+
+**行为分析**：
+1. **列数少于表头**：`row[i]` 抛出 `IndexError`，捕获后设为 `None`
+2. **列数多于表头**：循环只执行 `len(column_names)` 次，多余列被静默截断
+   - 第 5 行有 5 列，但只输出 4 个字段
+   - 第 5 列的值 `"15"` 完全丢失
+
+**非流式模式实现**：
+由 `agate.Table.from_csv()` 处理，该方法严格检查表结构一致性：
+```
+ValueError: Row 4 has 5 values, but Table only has 4 columns.
+```
+
+注意：错误消息中的 `Row 4` 是 0-based 索引，对应第 5 行数据。
+
+#### 7.3.6 行为对比总结
+
+| 场景 | 流式模式 | 非流式模式 |
+|------|----------|-----------|
+| 列数 = 表头 | 正常输出 | 正常输出 |
+| 列数 < 表头 | 缺失列设为 `null` | 可能报错（取决于 agate 配置） |
+| 列数 > 表头 | **多余列被静默截断** | **抛出 ValueError** |
+| 整体行为 | 宽容、容错 | 严格、一致性优先 |
+
+#### 7.3.7 结论
+
+| 评估维度 | 结论 |
+|----------|------|
+| 问题性质 | **两种模式的设计差异** |
+| 行为可预测性 | 流式模式的多余列截断是**隐式行为**，容易被忽视 |
+| 数据风险 | 流式模式下可能**静默丢失数据**（多余列被截断） |
+| 设计意图 | 流式模式追求"永不失败"，非流式模式追求"数据一致性" |
+
+**关键发现**：
+1. **列数不足**：流式模式用 `null` 填充，行为明确
+2. **列数过多**：流式模式**静默截断**，这是一个需要注意的隐式行为
+3. **非流式模式**：严格检查，列数过多时直接报错
+
+**实际影响**：
+```python
+# 输入行: 11,12,13,14,15 (5列)
+# 表头: a,b,c,d (4列)
+
+# 流式模式输出:
+{"a": "11", "b": "12", "c": "13", "d": "14"}
+# 第5列 "15" 丢失了！没有任何警告或错误
+```
+
+**使用建议**：
+- 使用流式模式处理不确定结构的数据时，建议先用 `csvkit` 的其他工具验证数据结构
+- 或者在处理前确保所有行的列数一致
+- 列数多于表头的情况比列数不足更危险，因为数据会**静默丢失**
+
+---
+
+## 八、附录
 
 ### A. 类与方法索引
 

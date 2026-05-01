@@ -1,0 +1,6 @@
+slug,title,latitude,longitude
+valid1,Valid Point 1,32.35066,-95.30181
+invalid1,Invalid Coords,abc,def
+valid2,Valid Point 2,32.33396,-95.28174
+invalid2,Empty Latitude,,
+valid3,Valid Point 3,32.299076986939205,-95.31571447849274
