@@ -98,3 +98,94 @@ class TestCSVSort(CSVKitTestCase, ColumnsTests, EmptyFileTests, NamesTests):
             ])
 
         input_file.close()
+
+    def test_natural_sort(self):
+        reader = self.get_output_as_reader(['-c', '1', '-N', '--no-inference', 'examples/test_natural_sort.csv'])
+        test_order = ['name', 'file1', 'file2', 'file10', 'file12', 'File20']
+        new_order = [str(r[0]) for r in reader]
+        self.assertEqual(test_order, new_order)
+
+    def test_natural_sort_reverse(self):
+        reader = self.get_output_as_reader(['-c', '1', '-N', '-r', '--no-inference', 'examples/test_natural_sort.csv'])
+        test_order = ['name', 'File20', 'file12', 'file10', 'file2', 'file1']
+        new_order = [str(r[0]) for r in reader]
+        self.assertEqual(test_order, new_order)
+
+    def test_natural_sort_with_ignore_case(self):
+        reader = self.get_output_as_reader(['-c', '1', '-N', '-i', '--no-inference', 'examples/test_natural_sort.csv'])
+        test_order = ['name', 'file1', 'file2', 'file10', 'file12', 'File20']
+        new_order = [str(r[0]) for r in reader]
+        self.assertEqual(test_order, new_order)
+
+    def test_null_order_first(self):
+        reader = self.get_output_as_reader(['-c', '2', '--null-order', 'first', 'examples/sort_ints_nulls.csv'])
+        test_order = ['b', '', '1', '2']
+        new_order = [str(r[1]) for r in reader]
+        self.assertEqual(test_order, new_order)
+
+    def test_null_order_first_reverse(self):
+        reader = self.get_output_as_reader(['-c', '2', '--null-order', 'first', '-r', 'examples/sort_ints_nulls.csv'])
+        test_order = ['b', '2', '1', '']
+        new_order = [str(r[1]) for r in reader]
+        self.assertEqual(test_order, new_order)
+
+    def test_multi_key_null_order(self):
+        reader = self.get_output_as_reader(['-c', '1,2', '--null-order', 'first,last', '--no-inference', 'examples/test_multi_key_nulls.csv'])
+        test_order = [
+            ['category', 'subcategory', 'value'],
+            ['', 'A', '4'],
+            ['A', 'X', '1'],
+            ['A', '', '2'],
+            ['A', '', '6'],
+            ['B', 'Y', '3'],
+            ['B', 'Z', '5'],
+        ]
+        new_order = list(reader)
+        self.assertEqual(test_order, new_order)
+
+    def test_multi_key_null_order_first_first(self):
+        reader = self.get_output_as_reader(['-c', '1,2', '--null-order', 'first,first', '--no-inference', 'examples/test_multi_key_nulls.csv'])
+        test_order = [
+            ['category', 'subcategory', 'value'],
+            ['', 'A', '4'],
+            ['A', '', '2'],
+            ['A', '', '6'],
+            ['A', 'X', '1'],
+            ['B', 'Y', '3'],
+            ['B', 'Z', '5'],
+        ]
+        new_order = list(reader)
+        self.assertEqual(test_order, new_order)
+
+    def test_multi_key_null_order_last_first(self):
+        reader = self.get_output_as_reader(['-c', '1,2', '--null-order', 'last,first', '--no-inference', 'examples/test_multi_key_nulls.csv'])
+        test_order = [
+            ['category', 'subcategory', 'value'],
+            ['A', '', '2'],
+            ['A', '', '6'],
+            ['A', 'X', '1'],
+            ['B', 'Y', '3'],
+            ['B', 'Z', '5'],
+            ['', 'A', '4'],
+        ]
+        new_order = list(reader)
+        self.assertEqual(test_order, new_order)
+
+    def test_ignore_case_with_null_order_first(self):
+        reader = self.get_output_as_reader(['-c', '1', '-i', '--null-order', 'first', '--no-inference', 'examples/test_ignore_case.csv'])
+        test_order = [
+            ['a', 'b', 'c'],
+            ['100', '2003-01-01', 'a'],
+            ['100', '2003-01-01', 'A'],
+            ['20', '2002-01-01', 'b'],
+            ['20', '2001-01-01', 'c'],
+            ['3', '2009-01-01', 'd'],
+        ]
+        new_order = list(reader)
+        self.assertEqual(test_order, new_order)
+
+    def test_natural_sort_with_null_order(self):
+        reader = self.get_output_as_reader(['-c', '1', '-N', '--null-order', 'first', '--no-inference', 'examples/test_natural_sort.csv'])
+        test_order = ['name', 'file1', 'file2', 'file10', 'file12', 'File20']
+        new_order = [str(r[0]) for r in reader]
+        self.assertEqual(test_order, new_order)

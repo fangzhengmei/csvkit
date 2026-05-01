@@ -1,0 +1,7 @@
+category,subcategory,value
+A,X,1
+A,,2
+B,Y,3
+,A,4
+B,Z,5
+A,,6

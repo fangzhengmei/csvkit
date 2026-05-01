@@ -1,17 +1,100 @@
 #!/usr/bin/env python
 
+import re
+
 import agate
 
 from csvkit.cli import CSVKitUtility, parse_column_identifiers
 
 
-def ignore_case_sort(key):
+class NullOrderFirst:
+    def __eq__(self, other):
+        return isinstance(other, NullOrderFirst)
+
+    def __gt__(self, other):
+        return False
+
+    def __lt__(self, other):
+        return True
+
+
+class NullOrderLast(agate.NullOrder):
+    pass
+
+
+def _natural_sort_key(s):
+    if not isinstance(s, str):
+        return s
+    return tuple(int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s))
+
+
+def ignore_case_sort(key, null_order=None, natural_sort=False):
+    if null_order is None:
+        null_order = ['last'] * len(key)
+    if len(null_order) < len(key):
+        null_order = null_order + ['last'] * (len(key) - len(null_order))
 
     def inner(row):
-        return tuple(
-            agate.NullOrder() if row[n] is None else (row[n].upper() if isinstance(row[n], str) else row[n])
-            for n in key
-        )
+        result = []
+        for i, n in enumerate(key):
+            if row[n] is None:
+                if null_order[i] == 'first':
+                    result.append(NullOrderFirst())
+                else:
+                    result.append(NullOrderLast())
+            elif natural_sort and isinstance(row[n], str):
+                if isinstance(row[n], str):
+                    val = row[n].upper() if row[n] else row[n]
+                else:
+                    val = row[n]
+                result.append(_natural_sort_key(val))
+            elif isinstance(row[n], str):
+                result.append(row[n].upper() if row[n] else row[n])
+            else:
+                result.append(row[n])
+        return tuple(result)
+
+    return inner
+
+
+def natural_sort(key, null_order=None):
+    if null_order is None:
+        null_order = ['last'] * len(key)
+    if len(null_order) < len(key):
+        null_order = null_order + ['last'] * (len(key) - len(null_order))
+
+    def inner(row):
+        result = []
+        for i, n in enumerate(key):
+            if row[n] is None:
+                if null_order[i] == 'first':
+                    result.append(NullOrderFirst())
+                else:
+                    result.append(NullOrderLast())
+            else:
+                result.append(_natural_sort_key(row[n]))
+        return tuple(result)
+
+    return inner
+
+
+def standard_sort(key, null_order=None):
+    if null_order is None:
+        null_order = ['last'] * len(key)
+    if len(null_order) < len(key):
+        null_order = null_order + ['last'] * (len(key) - len(null_order))
+
+    def inner(row):
+        result = []
+        for i, n in enumerate(key):
+            if row[n] is None:
+                if null_order[i] == 'first':
+                    result.append(NullOrderFirst())
+                else:
+                    result.append(NullOrderLast())
+            else:
+                result.append(row[n])
+        return tuple(result)
 
     return inner
 
@@ -34,6 +117,14 @@ class CSVSort(CSVKitUtility):
             '-i', '--ignore-case', dest='ignore_case', action='store_true',
             help='Perform case-independent sorting.')
         self.argparser.add_argument(
+            '-N', '--natural-sort', dest='natural_sort', action='store_true',
+            help='Perform natural sort (human-friendly sorting of strings with numbers, e.g. "file2" before "file10").')
+        self.argparser.add_argument(
+            '--null-order', dest='null_order',
+            help='A comma-separated list of null handling strategies for each sort key. '
+                 'Use "first" to place nulls at the beginning, "last" to place nulls at the end. '
+                 'e.g. "first,last" for two sort keys. Defaults to "last" for all keys.')
+        self.argparser.add_argument(
             '-y', '--snifflimit', dest='sniff_limit', type=int, default=1024,
             help='Limit CSV dialect sniffing to the specified number of bytes. '
                  'Specify "0" to disable sniffing entirely, or "-1" to sniff the entire file.')
@@ -41,6 +132,22 @@ class CSVSort(CSVKitUtility):
             '-I', '--no-inference', dest='no_inference', action='store_true',
             help='Disable type inference (and --locale, --date-format, --datetime-format, --no-leading-zeroes) '
                  'when parsing the input.')
+
+    def _parse_null_order(self, null_order_str, num_keys):
+        if not null_order_str:
+            return ['last'] * num_keys
+
+        null_order = []
+        for item in null_order_str.split(','):
+            item = item.strip().lower()
+            if item not in ('first', 'last'):
+                self.argparser.error(f'Invalid null order value: "{item}". Must be "first" or "last".')
+            null_order.append(item)
+
+        if len(null_order) < num_keys:
+            null_order = null_order + ['last'] * (num_keys - len(null_order))
+
+        return null_order
 
     def main(self):
         if self.args.names_only:
@@ -65,8 +172,17 @@ class CSVSort(CSVKitUtility):
             self.get_column_offset(),
         )
 
-        if self.args.ignore_case:
-            key = ignore_case_sort(key)
+        key_list = list(key)
+        null_order = self._parse_null_order(self.args.null_order, len(key_list))
+
+        if self.args.ignore_case and self.args.natural_sort:
+            key = ignore_case_sort(key_list, null_order=null_order, natural_sort=True)
+        elif self.args.ignore_case:
+            key = ignore_case_sort(key_list, null_order=null_order, natural_sort=False)
+        elif self.args.natural_sort:
+            key = natural_sort(key_list, null_order=null_order)
+        elif self.args.null_order:
+            key = standard_sort(key_list, null_order=null_order)
 
         table = table.order_by(key, reverse=self.args.reverse)
         table.to_csv(self.output_file, **self.writer_kwargs)
