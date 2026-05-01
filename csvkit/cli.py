@@ -20,13 +20,17 @@ import agate
 from agate.data_types.base import DEFAULT_NULL_VALUES
 
 from csvkit.exceptions import ColumnIdentifierError, RequiredHeaderError
+from csvkit.dialect import (
+    QUOTING_CHOICES,
+    add_input_dialect_arguments,
+    extract_input_dialect_kwargs,
+    extract_output_dialect_kwargs,
+)
 
 try:
     import zstandard
 except ImportError:
     zstandard = None
-
-QUOTING_CHOICES = sorted(getattr(csv, name) for name in dir(csv) if name.startswith('QUOTE_'))
 
 
 class LazyFile:
@@ -172,36 +176,7 @@ class CSVKitUtility:
             self.argparser.add_argument(
                 metavar='FILE', nargs='?', dest='input_path',
                 help='The CSV file to operate on. If omitted, will accept input as piped data via STDIN.')
-        if 'd' not in self.override_flags:
-            self.argparser.add_argument(
-                '-d', '--delimiter', dest='delimiter',
-                help='Delimiting character of the input CSV file.')
-        if 't' not in self.override_flags:
-            self.argparser.add_argument(
-                '-t', '--tabs', dest='tabs', action='store_true',
-                help='Specify that the input CSV file is delimited with tabs. Overrides "-d".')
-        if 'q' not in self.override_flags:
-            self.argparser.add_argument(
-                '-q', '--quotechar', dest='quotechar',
-                help='Character used to quote strings in the input CSV file.')
-        if 'u' not in self.override_flags:
-            self.argparser.add_argument(
-                '-u', '--quoting', dest='quoting', type=int, choices=QUOTING_CHOICES,
-                help='Quoting style used in the input CSV file: 0 quote minimal, 1 quote all, '
-                     '2 quote non-numeric, 3 quote none.')
-        if 'b' not in self.override_flags:
-            self.argparser.add_argument(
-                '-b', '--no-doublequote', dest='doublequote', action='store_false',
-                help='Whether or not double quotes are doubled in the input CSV file.')
-        if 'p' not in self.override_flags:
-            self.argparser.add_argument(
-                '-p', '--escapechar', dest='escapechar',
-                help='Character used to escape the delimiter if --quoting 3 ("quote none") is specified and to escape '
-                     'the QUOTECHAR if --no-doublequote is specified.')
-        if 'z' not in self.override_flags:
-            self.argparser.add_argument(
-                '-z', '--maxfieldsize', dest='field_size_limit', type=int,
-                help='Maximum length of a single field in the input CSV file.')
+        add_input_dialect_arguments(self.argparser, self.override_flags)
         if 'e' not in self.override_flags:
             self.argparser.add_argument(
                 '-e', '--encoding', dest='encoding', default=os.getenv('PYTHONIOENCODING', 'utf-8-sig'),
@@ -210,10 +185,6 @@ class CSVKitUtility:
             self.argparser.add_argument(
                 '-L', '--locale', dest='locale', default='en_US',
                 help='Specify the locale (en_US) of any formatted numbers.')
-        if 'S' not in self.override_flags:
-            self.argparser.add_argument(
-                '-S', '--skipinitialspace', dest='skipinitialspace', action='store_true',
-                help='Ignore whitespace immediately following the delimiter.')
         if 'I' not in self.override_flags:
             self.argparser.add_argument(
                 '--blanks', dest='blanks', action='store_true',
@@ -297,37 +268,13 @@ class CSVKitUtility:
         """
         Extracts those from the command-line arguments those would should be passed through to the input CSV reader(s).
         """
-        kwargs = {}
-
-        field_size_limit = getattr(self.args, 'field_size_limit')
-        if field_size_limit is not None:
-            csv.field_size_limit(field_size_limit)
-
-        if self.args.tabs:
-            kwargs['delimiter'] = '\t'
-        elif self.args.delimiter:
-            kwargs['delimiter'] = self.args.delimiter
-
-        for arg in ('quotechar', 'quoting', 'doublequote', 'escapechar', 'skipinitialspace'):
-            value = getattr(self.args, arg)
-            if value is not None:
-                kwargs[arg] = value
-
-        if getattr(self.args, 'no_header_row', None):
-            kwargs['header'] = not self.args.no_header_row
-
-        return kwargs
+        return extract_input_dialect_kwargs(self.args)
 
     def _extract_csv_writer_kwargs(self):
         """
         Extracts those from the command-line arguments those would should be passed through to the output CSV writer.
         """
-        kwargs = {}
-
-        if getattr(self.args, 'line_numbers', None):
-            kwargs['line_numbers'] = True
-
-        return kwargs
+        return extract_output_dialect_kwargs(self.args)
 
     def _install_exception_handler(self):
         """
