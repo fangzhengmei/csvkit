@@ -10,60 +10,152 @@
 
 ### 2.1 连接生命周期管理
 
-#### csvsql 的连接管理
+#### 基类保护机制分析
 
-`csvsql` 采用**双层 try-finally 结构**确保资源安全释放：
+首先需要理解基类 `CSVKitUtility.run()` 的保护机制：
+
+```python
+# csvkit/cli.py:130-149
+def run(self):
+    if 'f' not in self.override_flags:
+        self.input_file = self._open_input_file(self.args.input_path)
+    
+    try:
+        self.main()
+    finally:
+        if 'f' not in self.override_flags:
+            self.input_file.close()
+```
+
+**关键发现**：
+- `CSVSQL.override_flags = ['f']` → 包含 'f'
+- `SQL2CSV.override_flags = ['f', 'b', 'd', 'e', 'H', 'I', 'K', 'L', 'p', 'q', 'S', 't', 'u', 'z', 'zero', 'add-bom']` → 包含 'f'
+
+**结论**：两个工具的基类 `run()` 方法**不会**自动管理文件生命周期，也不会管理数据库连接。工具必须**完全自己管理资源**。
+
+---
+
+#### csvsql 的连接管理（存在缺陷）
+
+`csvsql` 虽然有 `try-finally` 结构，但存在**关键缺陷**：
 
 ```python
 # csvkit/utilities/csvsql.py:100-169
 def main(self):
-    # ... 参数验证 ...
+    # ... 参数验证 (Line 101-140) ...
     
-    # 建立数据库连接
+    # ⚠️ 问题1: 文件在 try-finally 之前打开！
+    # Line 142-144: 先打开文件
+    for path in self.args.input_paths:
+        self.input_files.append(self._open_input_file(path))
+    
+    # Line 147-159: 数据库连接
     if self.args.connection_string:
         try:
-            engine = create_engine(self.args.connection_string, **parse_list(self.args.engine_option))
+            engine = create_engine(...)  # Line 149
         except ImportError as e:
-            raise ImportError(...) from e
+            raise ImportError(...) from e  # 只捕获 ImportError
         
-        self.connection = engine.connect()
+        # ⚠️ 问题2: connect() 在 try-except 外部！
+        self.connection = engine.connect()  # Line 159: 可能失败！
     
+    # Line 161-169: try-finally
     try:
         self._failsafe_main()
     finally:
-        # 确保文件和连接都被关闭
         for f in self.input_files:
             f.close()
         
+        # ⚠️ 问题3: engine.dispose() 在条件判断内部！
         if self.connection:
             self.connection.close()
-            engine.dispose()
+            engine.dispose()  # 只有 self.connection 为真才执行！
 ```
 
-**关键设计点**：
+**代码结构问题**：
+
+```
+执行顺序：
+┌─────────────────────────────────────────────────────────────┐
+│ 1. 参数验证 (Line 101-140)                                   │
+├─────────────────────────────────────────────────────────────┤
+│ 2. 打开文件 (Line 142-144)  ← 文件已打开！                   │
+├─────────────────────────────────────────────────────────────┤
+│ 3. 数据库连接 (Line 147-159)                                 │
+│    ├─ try: create_engine() (仅捕获 ImportError)              │
+│    └─ engine.connect() ← 在 try 外部！可能抛出任何异常        │
+├─────────────────────────────────────────────────────────────┤
+│ 4. try-finally 开始 (Line 161) ← 这里才开始保护！            │
+│    ├─ try: self._failsafe_main()                             │
+│    └─ finally: 清理资源                                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**关键设计点（及缺陷）**：
 - **连接创建**：使用 `sqlalchemy.create_engine()` 创建引擎，支持 `--engine-option` 参数传递额外配置
-- **延迟打开**：输入文件使用 `LazyFile` 延迟打开模式，避免不必要的资源占用
-- **双层保护**：外层 `main()` 的 finally 确保所有资源释放，内层 `_failsafe_main()` 处理事务
+- **延迟打开**：输入文件使用 `LazyFile` 延迟打开模式，但打开操作在 `try-finally` 之前
+- **⚠️ 缺陷1**：文件和连接创建在 `try-finally` 块之前，如果这些步骤失败，`finally` 不会执行
+- **⚠️ 缺陷2**：`engine.connect()` 在 `try-except` 外部，只捕获 `ImportError`，其他异常会泄漏资源
+- **⚠️ 缺陷3**：`engine.dispose()` 在 `if self.connection:` 块内，如果 `connect()` 失败，`self.connection` 是 `None`，`engine.dispose()` 不会被调用
 
-#### sql2csv 的连接管理
+---
 
-`sql2csv` 的连接管理相对简化，但同样确保资源释放：
+#### sql2csv 的连接管理（严重缺陷）
+
+`sql2csv` **完全没有 `try-finally` 保护**，资源清理只在正常路径执行：
 
 ```python
-# csvkit/utilities/sql2csv.py:58-94
+# csvkit/utilities/sql2csv.py:54-94
 def main(self):
+    # Line 55-56: 参数检查
+    
+    # Line 58-67: try-except (仅捕获 ImportError)
     try:
-        engine = create_engine(self.args.connection_string, **parse_list(self.args.engine_option))
+        engine = create_engine(...)  # Line 59
     except ImportError as e:
         raise ImportError(...) from e
     
-    connection = engine.connect()
+    # ⚠️ 问题1: connect() 在 try-except 外部！
+    connection = engine.connect()  # Line 69
     
-    # ... 执行查询和输出 ...
+    # Line 71-81: 获取 SQL 查询（可能打开 input_file）
+    # Line 83: 执行查询
+    # Line 84-91: 输出
     
-    connection.close()
-    engine.dispose()
+    # ⚠️ 问题2: 清理代码只在正常路径执行！
+    connection.close()  # Line 93: 只有前面都成功才执行
+    engine.dispose()    # Line 94: 只有前面都成功才执行
 ```
+
+**代码结构问题**：
+
+```
+执行顺序：
+┌─────────────────────────────────────────────────────────────┐
+│ 1. 参数检查 (Line 55-56)                                     │
+├─────────────────────────────────────────────────────────────┤
+│ 2. create_engine() (Line 59)                                 │
+│    - 仅捕获 ImportError，其他异常直接抛出                       │
+├─────────────────────────────────────────────────────────────┤
+│ 3. engine.connect() (Line 69) ← 在 try 外部！                │
+│    - 任何异常都会导致 engine 泄漏                               │
+├─────────────────────────────────────────────────────────────┤
+│ 4. 获取 SQL 查询 (Line 71-81)                                │
+│    - 可能打开 input_file                                      │
+│    - 读取过程中异常会导致所有资源泄漏                           │
+├─────────────────────────────────────────────────────────────┤
+│ 5. 执行查询 + 输出 (Line 83-91)                               │
+│    - 任何异常都会导致 connection 和 engine 泄漏                │
+├─────────────────────────────────────────────────────────────┤
+│ 6. 清理 (Line 93-94)                                          │
+│    ⚠️ 只有前面所有步骤都成功才会执行！                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**关键缺陷**：
+- **完全没有 `try-finally` 保护**
+- `connection.close()` 和 `engine.dispose()` 只在正常路径末尾执行
+- **任何异常都会导致资源泄漏**
 
 ### 2.2 事务管理 (csvsql)
 
