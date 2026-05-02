@@ -204,6 +204,215 @@ def parse_list(pairs):
     return options
 ```
 
+### 2.4 统一场景对比：连接失败、查询异常、正常结束
+
+为了确保结论一致，以下是两个工具在**三个关键场景**下的资源释放行为统一对比：
+
+---
+
+#### 2.4.1 核心场景定义
+
+我们将所有可能的异常情况归纳为三个核心场景：
+
+| 场景 ID | 场景名称 | 定义 |
+|---------|---------|------|
+| **场景 A** | **连接建立失败** | `create_engine()` 或 `engine.connect()` 阶段发生异常 |
+| **场景 B** | **查询执行异常** | 成功建立连接后，在查询执行或数据处理阶段发生异常 |
+| **场景 C** | **正常结束** | 所有步骤成功完成，无异常 |
+
+---
+
+#### 2.4.2 csvsql 三个场景统一分析
+
+**csvsql 代码执行顺序回顾**：
+
+```
+执行顺序：
+1. Line 101-140: 参数验证
+2. Line 142-144: 打开文件（在 try-finally 之前！）
+3. Line 147-159: 数据库连接
+   - Line 149: create_engine() (仅捕获 ImportError)
+   - Line 159: engine.connect() (在 try-except 外部！)
+4. Line 161-169: try-finally 块 ← 这里才开始保护！
+   - Line 162: try: self._failsafe_main()
+   - Line 163-169: finally: 清理资源
+```
+
+**关键点**：
+- `try-finally` 只保护 `_failsafe_main()` 的执行
+- 文件打开和数据库连接都在 `try` 块**之前**
+- `finally` 块的执行前提：**必须成功进入 `try` 块**
+
+---
+
+**csvsql 三个场景详细分析**：
+
+**场景 A：连接建立失败**
+
+| 子场景 | 异常位置 | 是否进入 try-finally | 文件释放 | engine 释放 | connection 释放 |
+|--------|---------|---------------------|---------|------------|-----------------|
+| A1: `create_engine()` ImportError | Line 149 | ❌ **否**（在 Line 161 之前） | ❌ **泄漏**（Line 142-144 已打开） | 未创建成功 | 未创建 |
+| A2: `create_engine()` 其他异常 | Line 149 | ❌ **否** | ❌ **泄漏** | 未创建/部分创建 | 未创建 |
+| A3: `engine.connect()` 失败 | Line 159 | ❌ **否** | ❌ **泄漏** | ❌ **泄漏**（`engine.dispose()` 在 `if self.connection:` 内） | 未创建 |
+
+**场景 A 为什么会泄漏**：
+1. 文件在 Line 142-144 打开
+2. 连接在 Line 147-159 创建
+3. `try-finally` 在 Line 161 才开始
+4. 如果 Line 149 或 Line 159 异常，**还没进入 `try` 块**
+5. `finally` 块**不会执行**！
+
+---
+
+**场景 B：查询执行异常**（在 `_failsafe_main()` 内）
+
+| 子场景 | 异常位置 | 是否进入 try-finally | 文件释放 | engine 释放 | connection 释放 | 事务 |
+|--------|---------|---------------------|---------|------------|-----------------|------|
+| B1: CSV 解析错误 | `_failsafe_main()` 内 | ✅ **是** | ✅ **正常释放**（finally 执行） | ✅ **正常释放**（`if self.connection:` 为真） | ✅ **正常释放** | ❌ **未提交**（`transaction.commit()` 未执行） |
+| B2: 数据库操作错误 | `_failsafe_main()` 内 | ✅ **是** | ✅ **正常释放** | ✅ **正常释放** | ✅ **正常释放** | ❌ **未提交** |
+| B3: 查询输出错误 | `_failsafe_main()` 内 | ✅ **是** | ✅ **正常释放** | ✅ **正常释放** | ✅ **正常释放** | ❌ **未提交** |
+
+**场景 B 为什么不会泄漏**：
+1. 已成功进入 Line 161 的 `try` 块
+2. 无论 `_failsafe_main()` 内发生什么异常，`finally` 都会执行
+3. `self.connection` 不为 None（因为已成功连接）
+4. `connection.close()` 和 `engine.dispose()` 都会执行
+
+**但事务不会提交**：
+- `transaction.commit()` 在 `_failsafe_main()` 末尾
+- 如果异常发生在 `commit()` 之前，事务不会提交
+- 连接关闭时 SQLAlchemy 会隐式回滚，但这是依赖实现细节
+
+---
+
+**场景 C：正常结束**
+
+| 项目 | 结果 |
+|------|------|
+| 是否进入 try-finally | ✅ 是 |
+| 文件释放 | ✅ 正常释放 |
+| engine 释放 | ✅ 正常释放 |
+| connection 释放 | ✅ 正常释放 |
+| 事务 | ✅ 已提交 |
+
+---
+
+**csvsql 三个场景统一对比表**：
+
+| 场景 | 是否进入 try-finally | 文件释放 | engine 释放 | connection 释放 | 事务 |
+|------|---------------------|---------|------------|-----------------|------|
+| **A: 连接建立失败** | ❌ **否** | ❌ **泄漏** | ❌ **泄漏** (connect失败时) | 未创建 | 未开始 |
+| **B: 查询执行异常** | ✅ **是** | ✅ **正常释放** | ✅ **正常释放** | ✅ **正常释放** | ❌ **未提交** |
+| **C: 正常结束** | ✅ **是** | ✅ **正常释放** | ✅ **正常释放** | ✅ **正常释放** | ✅ **已提交** |
+
+---
+
+#### 2.4.3 sql2csv 三个场景统一分析
+
+**sql2csv 代码执行顺序回顾**：
+
+```
+执行顺序：
+1. Line 55-56: 参数检查
+2. Line 58-67: create_engine() (仅捕获 ImportError)
+3. Line 69: engine.connect() (完全无保护！)
+4. Line 71-91: 获取 SQL、执行查询、输出
+5. Line 93-94: connection.close() + engine.dispose() (只在正常路径！)
+```
+
+**关键点**：
+- **完全没有 `try-finally` 保护**
+- 清理代码（Line 93-94）只在**所有步骤成功**时才会执行
+- **任何异常都会跳过清理代码**
+
+---
+
+**sql2csv 三个场景详细分析**：
+
+**场景 A：连接建立失败**
+
+| 子场景 | 异常位置 | 是否有 try-finally 保护 | 文件释放 | engine 释放 | connection 释放 |
+|--------|---------|------------------------|---------|------------|-----------------|
+| A1: `create_engine()` ImportError | Line 59 | ❌ **无** | 不适用（还未打开） | 未创建成功 | 未创建 |
+| A2: `create_engine()` 其他异常 | Line 59 | ❌ **无** | 不适用 | 未创建/部分创建 | 未创建 |
+| A3: `engine.connect()` 失败 | Line 69 | ❌ **无** | 不适用 | ❌ **泄漏**（`engine.dispose()` 不会执行） | 未创建 |
+
+**场景 A3 为什么会泄漏**：
+1. `engine = create_engine()` 成功执行
+2. `engine.connect()` 抛出异常
+3. 没有 `try-finally` 保护
+4. `engine.dispose()` 在 Line 94，**永远不会执行**！
+
+---
+
+**场景 B：查询执行异常**
+
+| 子场景 | 异常位置 | 是否有 try-finally 保护 | 文件释放 | engine 释放 | connection 释放 |
+|--------|---------|------------------------|---------|------------|-----------------|
+| B1: 打开 SQL 文件失败 | Line 76 | ❌ **无** | 不适用（打开失败） | ❌ **泄漏** | ❌ **泄漏** |
+| B2: 读取 SQL 文件过程异常 | Line 78-79 | ❌ **无** | ❌ **泄漏**（`self.input_file.close()` 在 Line 81，不会执行） | ❌ **泄漏** | ❌ **泄漏** |
+| B3: `exec_driver_sql()` 失败 | Line 83 | ❌ **无** | ✅ 已关闭（Line 81） | ❌ **泄漏** | ❌ **泄漏** |
+| B4: 输出过程异常 | Line 87-91 | ❌ **无** | ✅ 已关闭 | ❌ **泄漏** | ❌ **泄漏** |
+
+**场景 B2 为什么文件也会泄漏**：
+1. Line 76: `self.input_file = self._open_input_file(...)` 成功
+2. Line 78-79: `for line in self.input_file: ...` 过程中异常
+3. Line 81: `self.input_file.close()` **不会执行**！
+4. 文件句柄泄漏
+
+---
+
+**场景 C：正常结束**
+
+| 项目 | 结果 |
+|------|------|
+| 是否有 try-finally 保护 | ❌ 无，但顺序执行 |
+| 文件释放 | ✅ 正常释放（如果打开过） |
+| engine 释放 | ✅ 正常释放 |
+| connection 释放 | ✅ 正常释放 |
+
+---
+
+**sql2csv 三个场景统一对比表**：
+
+| 场景 | 是否有 try-finally 保护 | 文件释放 | engine 释放 | connection 释放 |
+|------|------------------------|---------|------------|-----------------|
+| **A: 连接建立失败** | ❌ **无保护** | 不适用 (还未打开) | ❌ **泄漏** (connect失败时) | 未创建 |
+| **B: 查询执行异常** | ❌ **无保护** | ❌ **泄漏** (如果已打开且未关闭) | ❌ **泄漏** | ❌ **泄漏** |
+| **C: 正常结束** | ❌ **无保护** (但顺序执行) | ✅ **正常释放** (如果打开过) | ✅ **正常释放** | ✅ **正常释放** |
+
+---
+
+#### 2.4.4 两工具三场景对比总结
+
+| 维度 | csvsql | sql2csv |
+|------|--------|---------|
+| **保护机制** | `try-finally` 但位置不当 | ❌ **完全无保护** |
+| **try-finally 保护范围** | 仅 `_failsafe_main()` | 无 |
+| **场景 A: 连接建立失败** | ❌ 文件 + engine 泄漏 | ❌ engine 泄漏 |
+| **场景 B: 查询执行异常** | ✅ 资源正常释放（但事务未提交） | ❌ **所有资源泄漏** |
+| **场景 C: 正常结束** | ✅ 所有资源正常释放 | ✅ 所有资源正常释放 |
+| **实际安全性** | 连接阶段不安全，执行阶段安全 | **仅正常路径安全** |
+
+---
+
+#### 2.4.5 关键不一致修正
+
+**之前报告中不准确的描述**：
+
+| 原描述 | 实际情况 |
+|--------|---------|
+| "csvsql 采用双层 try-finally 结构确保资源安全释放" | ❌ `try-finally` 只保护 `_failsafe_main()`，**不保护资源创建阶段** |
+| "sql2csv 的连接管理相对简化，但同样确保资源释放" | ❌ **完全没有 `try-finally` 保护**，任何异常都会泄漏 |
+| "engine.dispose() 在 finally 中执行" | ⚠️ 只有 `if self.connection:` 为真时才执行；**如果 `connect()` 失败，不会执行** |
+
+**修正后的准确描述**：
+
+| 工具 | 实际保护情况 |
+|------|-------------|
+| csvsql | `try-finally` 只保护**查询执行阶段**（场景 B），**不保护资源创建阶段**（场景 A） |
+| sql2csv | **完全没有 `try-finally` 保护**，仅**正常路径**（场景 C）能正确释放资源 |
+
 ---
 
 ## 3. 流式查询处理机制
@@ -1156,6 +1365,488 @@ except (ImportError, AttributeError):
 ```
 
 这防止了类似 `csv2sql ... | head` 这样的管道操作产生 `[Errno 32] Broken pipe` 错误。
+
+---
+
+### 8.5 异常路径资源释放行为深度分析
+
+**⚠️ 重要修正**：之前的描述"双层 try-finally 确保资源安全释放"和"同样确保资源释放"是**不准确的**。实际上，两个工具在异常路径下都存在**资源泄漏风险**。
+
+---
+
+#### 8.5.1 csvsql 异常场景详细分析
+
+让我们逐个分析 csvsql 可能发生异常的所有位置：
+
+```
+csvsql.main() 执行流程：
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 阶段 A: 参数验证 (Line 101-140)                                          │
+│   - self.argparser.error() 会调用 sys.exit(2)                            │
+│   - 此时还未打开任何资源，无泄漏风险                                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 阶段 B: 打开文件 (Line 142-144) ⚠️ 在 try-finally 之前！                  │
+│   for path in self.args.input_paths:                                      │
+│       self.input_files.append(self._open_input_file(path))               │
+│                                                                           │
+│   可能的异常：                                                             │
+│   - 文件不存在 (FileNotFoundError)                                        │
+│   - 权限不足 (PermissionError)                                             │
+│   - 编码问题 (UnicodeDecodeError - 但 LazyFile 是延迟打开)                │
+│                                                                           │
+│   ⚠️ 如果这里异常：                                                        │
+│   - 已经打开的文件不会被关闭！                                              │
+│   - try-finally (Line 161) 还未进入！                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 阶段 C: 数据库连接 (Line 147-159) ⚠️ 在 try-finally 之前！              │
+│   if self.args.connection_string:                                          │
+│       try:                                                                  │
+│           engine = create_engine(...)  # Line 149                         │
+│       except ImportError as e:                                             │
+│           raise ImportError(...) from e  # 只捕获 ImportError             │
+│                                                                           │
+│       self.connection = engine.connect()  # Line 159 ⚠️ 在 try 外部！    │
+│                                                                           │
+│   可能的异常：                                                             │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │ 场景 C1: create_engine() 抛出 ImportError                          │   │
+│   │     - 被捕获，重新抛出 ImportError                                   │   │
+│   │     - engine 未创建成功                                              │   │
+│   │     - ⚠️ 文件已在阶段 B 打开！不会被关闭！                           │   │
+│   ├──────────────────────────────────────────────────────────────────┤   │
+│   │ 场景 C2: create_engine() 抛出其他异常 (非 ImportError)              │   │
+│   │     - 例如：无效的连接字符串格式                                       │   │
+│   │     - 未被捕获！直接向上传播                                           │   │
+│   │     - ⚠️ 文件已在阶段 B 打开！不会被关闭！                           │   │
+│   ├──────────────────────────────────────────────────────────────────┤   │
+│   │ 场景 C3: engine.connect() 抛出异常                                   │   │
+│   │     - 例如：连接超时、认证失败、网络问题、数据库不存在                 │   │
+│   │     - 在 try-except 外部！未被捕获！                                  │   │
+│   │     - engine 已创建成功                                               │   │
+│   │     - self.connection 仍是 None (赋值未完成)                          │   │
+│   │     - ⚠️ 文件已打开 + engine 泄漏！                                   │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 阶段 D: try-finally 保护区域 (Line 161-169)                              │
+│   try:                                                                     │
+│       self._failsafe_main()                                               │
+│   finally:                                                                 │
+│       for f in self.input_files:                                          │
+│           f.close()                                                        │
+│                                                                           │
+│       if self.connection:  # ⚠️ 条件判断！                                 │
+│           self.connection.close()                                          │
+│           engine.dispose()                                                 │
+│                                                                           │
+│   可能的异常：                                                             │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │ 场景 D1: _failsafe_main() 内任何异常                                │   │
+│   │     - 例如：CSV 解析错误、数据库操作错误、内存不足等                   │   │
+│   │     - finally 会执行！                                               │   │
+│   │     - 文件会被关闭                                                   │   │
+│   │     - 如果 self.connection 不为 None：                               │   │
+│   │       ✓ connection.close() 会执行                                    │   │
+│   │       ✓ engine.dispose() 会执行                                      │   │
+│   │     - ⚠️ 但事务不会被提交！（transaction.commit() 未执行）            │   │
+│   ├──────────────────────────────────────────────────────────────────┤   │
+│   │ 场景 D2: 阶段 C3 的情况 (connect() 失败)                             │   │
+│   │     - 实际上不会进入这个阶段！                                        │   │
+│   │     - 异常在进入 try 块之前就发生了                                   │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**csvsql 异常场景汇总表**：
+
+| 场景 | 异常位置 | 是否进入 finally | 文件泄漏 | engine 泄漏 | connection 泄漏 | 事务问题 |
+|------|---------|-----------------|---------|------------|-----------------|---------|
+| A1: 参数验证失败 | Line 101-140 | 否 | 否（还未打开） | 否（还未创建） | 否 | 否 |
+| B1: 打开文件失败 | Line 142-144 | 否 | ⚠️ **是**（已打开的部分） | 否 | 否 | 否 |
+| C1: create_engine ImportError | Line 149 | 否 | ⚠️ **是** | 否 | 否 | 否 |
+| C2: create_engine 其他异常 | Line 149 | 否 | ⚠️ **是** | 否 | 否 | 否 |
+| C3: connect() 失败 | Line 159 | 否 | ⚠️ **是** | ⚠️ **是** | 否（未创建） | 否 |
+| D1: _failsafe_main() 内异常 | Line 162 | 是 | ✓ 否 | ✓ 否 | ✓ 否 | ⚠️ **未提交** |
+| 正常执行 | - | - | ✓ 否 | ✓ 否 | ✓ 否 | ✓ 提交 |
+
+**csvsql 关键缺陷总结**：
+
+1. **缺陷 1**: `try-finally` 开始得太晚
+   - 文件打开和数据库连接操作都在 `try` 块之前
+   - 这些操作失败时，`finally` 不会执行
+
+2. **缺陷 2**: `create_engine()` 的异常处理不完整
+   - 只捕获 `ImportError`
+   - 其他异常（如无效连接字符串）会直接泄漏
+
+3. **缺陷 3**: `engine.connect()` 在 `try-except` 外部
+   - 任何连接失败都会导致 `engine` 泄漏
+
+4. **缺陷 4**: `engine.dispose()` 在条件判断内部
+   ```python
+   if self.connection:  # 如果 connect() 失败，这是 None
+       self.connection.close()
+       engine.dispose()  # ← 不会执行！
+   ```
+
+5. **缺陷 5**: 事务不会自动回滚
+   - `_failsafe_main()` 内异常时，`transaction.commit()` 不会执行
+   - 连接关闭时 SQLAlchemy 会隐式回滚，但这是依赖实现细节
+
+---
+
+#### 8.5.2 sql2csv 异常场景详细分析
+
+sql2csv 的情况**更严重**，因为它**完全没有 `try-finally` 保护**：
+
+```
+sql2csv.main() 执行流程：
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 阶段 A: 参数检查 (Line 55-56)                                             │
+│   if self.additional_input_expected() and not self.args.query:            │
+│       self.argparser.error('...')                                          │
+│   - 无资源，无泄漏风险                                                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 阶段 B: create_engine() (Line 58-67)                                       │
+│   try:                                                                     │
+│       engine = create_engine(...)  # Line 59                               │
+│   except ImportError as e:                                                 │
+│       raise ImportError(...) from e                                        │
+│                                                                           │
+│   可能的异常：                                                             │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │ 场景 B1: ImportError                                                │   │
+│   │     - 被捕获，重新抛出                                               │   │
+│   │     - engine 未创建                                                  │   │
+│   │     - 无资源泄漏                                                      │   │
+│   ├──────────────────────────────────────────────────────────────────┤   │
+│   │ 场景 B2: 其他异常 (非 ImportError)                                   │   │
+│   │     - 未被捕获！直接传播                                              │   │
+│   │     - engine 未创建成功（假设异常在赋值前发生）                        │   │
+│   │     - 无资源泄漏                                                      │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 阶段 C: engine.connect() (Line 69) ⚠️ 完全无保护！                      │
+│   connection = engine.connect()                                           │
+│                                                                           │
+│   可能的异常：                                                             │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │ 场景 C1: connect() 失败                                              │   │
+│   │     - 例如：连接超时、认证失败、网络问题                               │   │
+│   │     - 无 try-finally 保护！                                           │   │
+│   │     - engine 已创建成功                                               │   │
+│   │     - ⚠️ engine 泄漏！                                                │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 阶段 D: 获取 SQL 查询 (Line 71-81)                                         │
+│   if self.args.query:                                                      │
+│       query = self.args.query.strip()                                      │
+│   else:                                                                     │
+│       query = ""                                                            │
+│       self.input_file = self._open_input_file(self.args.input_path)  # 打开│
+│       for line in self.input_file:                                          │
+│           query += line                                                     │
+│       self.input_file.close()  # 关闭 ⚠️ 但如果中间异常呢？               │
+│                                                                           │
+│   可能的异常：                                                             │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │ 场景 D1: 打开文件失败                                               │   │
+│   │     - engine + connection 已创建！                                   │   │
+│   │     - ⚠️ engine + connection 泄漏！                                  │   │
+│   ├──────────────────────────────────────────────────────────────────┤   │
+│   │ 场景 D2: 读取文件过程中异常                                          │   │
+│   │     - 例如：磁盘错误、编码问题                                        │   │
+│   │     - self.input_file.close() 不会执行！                             │   │
+│   │     - ⚠️ engine + connection + input_file 都泄漏！                   │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 阶段 E: 执行查询 + 输出 (Line 83-91)                                       │
+│   rows = connection.exec_driver_sql(query)  # Line 83                     │
+│   output = agate.csv.writer(...)                                          │
+│   if rows.returns_rows:                                                    │
+│       output.writerow(rows._metadata.keys)                                │
+│       for row in rows:                                                     │
+│           output.writerow(row)                                             │
+│                                                                           │
+│   可能的异常：                                                             │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │ 场景 E1: exec_driver_sql() 失败                                     │   │
+│   │     - 例如：SQL 语法错误、权限不足、表不存在                          │   │
+│   │     - ⚠️ engine + connection 泄漏！                                  │   │
+│   ├──────────────────────────────────────────────────────────────────┤   │
+│   │ 场景 E2: 输出过程中异常                                              │   │
+│   │     - 例如：磁盘满、管道断开 (BrokenPipeError)                       │   │
+│   │     - 注意：基类有 SIGPIPE 处理，但其他异常呢？                       │   │
+│   │     - ⚠️ engine + connection 泄漏！                                  │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 阶段 F: 资源清理 (Line 93-94) ⚠️ 只有正常路径执行！                     │
+│   connection.close()  # Line 93                                           │
+│   engine.dispose()    # Line 94                                           │
+│                                                                           │
+│   ⚠️ 任何前面的异常都会跳过这两行！                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**sql2csv 异常场景汇总表**：
+
+| 场景 | 异常位置 | 资源泄漏情况 |
+|------|---------|-------------|
+| A1: 参数检查失败 | Line 55-56 | 无泄漏（还未创建资源） |
+| B1: create_engine ImportError | Line 59 | 无泄漏 |
+| B2: create_engine 其他异常 | Line 59 | 无泄漏（假设异常在赋值前） |
+| C1: connect() 失败 | Line 69 | ⚠️ **engine 泄漏** |
+| D1: 打开文件失败 | Line 76 | ⚠️ **engine + connection 泄漏** |
+| D2: 读取文件异常 | Line 78-79 | ⚠️ **engine + connection + input_file 泄漏** |
+| E1: exec_driver_sql() 失败 | Line 83 | ⚠️ **engine + connection 泄漏** |
+| E2: 输出过程异常 | Line 87-91 | ⚠️ **engine + connection 泄漏** |
+| 正常执行 | - | ✓ 无泄漏 |
+
+**sql2csv 关键缺陷总结**：
+
+1. **最严重缺陷**: **完全没有 `try-finally` 保护**
+   - `connection.close()` 和 `engine.dispose()` 只在正常路径末尾
+   - **任何异常都会导致资源泄漏**
+
+2. **缺陷 2**: `create_engine()` 的异常处理不完整
+   - 只捕获 `ImportError`
+
+3. **缺陷 3**: `engine.connect()` 完全无保护
+   - 在 `try-except` 外部
+
+4. **缺陷 4**: 文件读取过程无保护
+   - `self.input_file.close()` 在读取完成后
+   - 如果读取过程中异常，文件不会被关闭
+
+5. **缺陷 5**: 输出过程无保护
+   - 管道断开、磁盘满等情况都会导致资源泄漏
+
+---
+
+#### 8.5.3 正常路径 vs 异常路径对比
+
+**csvsql 正常路径**：
+
+```
+正常执行流程：
+1. 参数验证 ✓
+2. 打开文件 ✓
+3. create_engine() ✓ → engine 已创建
+4. engine.connect() ✓ → self.connection 已赋值
+5. 进入 try-finally 块
+6. _failsafe_main() ✓
+   ├─ transaction.begin() ✓
+   ├─ 处理 CSV / 执行 SQL ✓
+   └─ transaction.commit() ✓
+7. finally 块执行：
+   ├─ 关闭所有文件 ✓
+   ├─ 关闭 connection ✓
+   └─ dispose engine ✓
+
+结果：所有资源正确释放，事务正确提交
+```
+
+**csvsql 异常路径（以场景 C3: connect() 失败为例）**：
+
+```
+异常执行流程：
+1. 参数验证 ✓
+2. 打开文件 ✓ → ⚠️ 文件已打开！
+3. create_engine() ✓ → ⚠️ engine 已创建！
+4. engine.connect() ✗ → 抛出异常！
+   ├─ self.connection 仍是 None
+   └─ 异常向上传播
+5. ⚠️ 未进入 try-finally 块！（Line 161 的 try 还未执行）
+6. ⚠️ finally 块不会执行！
+
+结果：
+- ⚠️ 文件泄漏
+- ⚠️ engine 泄漏（engine.dispose() 永远不会执行）
+- 注意：connection 还未创建成功，所以没有 connection 泄漏
+```
+
+**sql2csv 正常路径**：
+
+```
+正常执行流程：
+1. 参数检查 ✓
+2. create_engine() ✓ → engine 已创建
+3. engine.connect() ✓ → connection 已创建
+4. 获取 SQL 查询 ✓
+5. 执行查询 ✓
+6. 输出 ✓
+7. 清理：
+   ├─ connection.close() ✓
+   └─ engine.dispose() ✓
+
+结果：所有资源正确释放
+```
+
+**sql2csv 异常路径（以场景 E2: 输出过程异常为例）**：
+
+```
+异常执行流程：
+1. 参数检查 ✓
+2. create_engine() ✓ → ⚠️ engine 已创建
+3. engine.connect() ✓ → ⚠️ connection 已创建
+4. 获取 SQL 查询 ✓
+5. 执行查询 ✓
+6. 输出过程中异常 ✗ → 例如：磁盘满、管道断开
+7. ⚠️ 跳过清理代码！
+   ├─ connection.close() 不会执行
+   └─ engine.dispose() 不会执行
+
+结果：
+- ⚠️ connection 泄漏
+- ⚠️ engine 泄漏
+```
+
+---
+
+#### 8.5.4 两工具异常行为对比总表
+
+| 维度 | csvsql | sql2csv |
+|------|--------|---------|
+| **是否有 try-finally** | 有，但位置不对 | ❌ **完全没有** |
+| **finally 保护范围** | 仅 `_failsafe_main()` | ❌ 无 |
+| **文件打开位置** | 在 try-finally 之前 ⚠️ | 读取 SQL 时（无保护） |
+| **create_engine() 异常处理** | 仅捕获 `ImportError` | 仅捕获 `ImportError` |
+| **engine.connect() 保护** | 在 try-except 外部 ⚠️ | ❌ 完全无保护 |
+| **engine.dispose() 条件** | `if self.connection:` ⚠️ | 无条件，但只在正常路径 |
+| **最可能泄漏的资源** | 文件 + engine | engine + connection + 文件 |
+| **事务处理** | 异常时不提交（依赖连接关闭回滚） | 无事务概念 |
+| **缺陷严重程度** | 中等（部分场景泄漏） | ❌ **严重（几乎所有异常都泄漏）** |
+
+---
+
+#### 8.5.5 代码修复建议
+
+**针对 csvsql 的修复建议**：
+
+```python
+# 修复后的 main() 结构
+def main(self):
+    # 参数验证 ...
+    
+    self.input_files = []
+    self.connection = None
+    engine = None  # 将 engine 提升到 try-finally 外部
+    
+    try:
+        # 1. 先打开文件（但放在 try 内）
+        for path in self.args.input_paths:
+            self.input_files.append(self._open_input_file(path))
+        
+        # 2. 数据库操作（也放在 try 内）
+        if self.args.connection_string:
+            engine = create_engine(...)
+            self.connection = engine.connect()
+        
+        # 3. 执行业务逻辑
+        self._failsafe_main()
+        
+    except Exception:
+        # 可选：异常处理
+        raise
+    finally:
+        # 4. 统一清理（无条件执行）
+        for f in self.input_files:
+            try:
+                f.close()
+            except Exception:
+                pass  # 忽略关闭时的异常
+        
+        if self.connection:
+            try:
+                self.connection.close()
+            except Exception:
+                pass
+        
+        if engine:  # 独立判断 engine，不依赖 connection
+            try:
+                engine.dispose()
+            except Exception:
+                pass
+```
+
+**针对 sql2csv 的修复建议**：
+
+```python
+# 修复后的 main() 结构
+def main(self):
+    # 参数检查 ...
+    
+    engine = None
+    connection = None
+    input_file = None
+    
+    try:
+        engine = create_engine(...)
+        connection = engine.connect()
+        
+        # 获取 SQL 查询
+        if self.args.query:
+            query = self.args.query.strip()
+        else:
+            input_file = self._open_input_file(self.args.input_path)
+            try:
+                query = ""
+                for line in input_file:
+                    query += line
+            finally:
+                if input_file:
+                    input_file.close()
+                    input_file = None
+        
+        # 执行查询和输出
+        rows = connection.execution_options(...).exec_driver_sql(query)
+        # ... 输出逻辑 ...
+        
+    finally:
+        # 统一清理
+        if connection:
+            try:
+                connection.close()
+            except Exception:
+                pass
+        
+        if engine:
+            try:
+                engine.dispose()
+            except Exception:
+                pass
+        
+        # 防御性关闭（如果前面异常时还没关闭）
+        if input_file:
+            try:
+                input_file.close()
+            except Exception:
+                pass
+```
+
+---
+
+#### 8.5.6 关键发现总结
+
+**之前报告的不准确之处**：
+
+| 原描述 | 实际情况 |
+|--------|---------|
+| "csvsql 采用双层 try-finally 结构确保资源安全释放" | ❌ `try-finally` 位置太晚，文件和连接创建在保护之外 |
+| "sql2csv 的连接管理相对简化，但同样确保资源释放" | ❌ 完全没有 `try-finally`，任何异常都会泄漏 |
+| "engine.dispose() 在 finally 中执行" | ⚠️ 只有 `if self.connection:` 为真时才执行 |
+
+**最严重的问题**：
+
+1. **csvsql**: `try-finally` 开始得太晚，资源创建操作在保护之外
+2. **csvsql**: `engine.dispose()` 在条件判断内部，`connect()` 失败时不会执行
+3. **sql2csv**: **完全没有 `try-finally` 保护**，这是最严重的缺陷
+
+**实际资源安全保障**：
+
+| 工具 | 实际保障 | 依赖 |
+|------|---------|------|
+| csvsql | 仅 `_failsafe_main()` 内异常有保障 | 必须成功进入 try 块 |
+| sql2csv | ❌ 几乎无保障 | 依赖进程退出时 OS 回收资源 |
 
 ---
 
