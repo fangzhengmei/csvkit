@@ -4,6 +4,7 @@ import agate
 from agate import config
 
 from csvkit.cli import CSVKitUtility
+from csvkit.render import print_markdown_table
 
 
 class CSVLook(CSVKitUtility):
@@ -57,8 +58,9 @@ class CSVLook(CSVKitUtility):
             **self.reader_kwargs,
         )
 
-        table.print_table(
-            output=self.output_file,
+        print_markdown_table(
+            table,
+            output_file=self.output_file,
             max_rows=self.args.max_rows,
             max_columns=self.args.max_columns,
             max_column_width=self.args.max_column_width,

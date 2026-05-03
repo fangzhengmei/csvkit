@@ -9,6 +9,7 @@ from decimal import Decimal
 import agate
 
 from csvkit.cli import CSVKitUtility, default_float_decimal, parse_column_identifiers
+from csvkit.render import dump_json, write_csv_dict_rows
 
 locale.setlocale(locale.LC_ALL, '')
 OPERATIONS = OrderedDict([
@@ -332,15 +333,19 @@ class CSVStat(CSVKitUtility):
         """
         Print data for all statistics as a CSV table.
         """
-        header = ['column_id', 'column_name'] + list(OPERATIONS)
+        fieldnames = ['column_id', 'column_name'] + list(OPERATIONS)
 
-        writer = agate.csv.DictWriter(self.output_file, fieldnames=header)
-        writer.writeheader()
-
-        for row in self._rows(table, column_ids, stats):
+        def transform_row(row):
             if 'freq' in row:
                 row['freq'] = ', '.join([str(row['value']) for row in row['freq']])
-            writer.writerow(row)
+            return row
+
+        write_csv_dict_rows(
+            self.output_file,
+            self._rows(table, column_ids, stats),
+            fieldnames=fieldnames,
+            transform_row=transform_row,
+        )
 
     def print_json(self, table, column_ids, stats):
         """
@@ -348,7 +353,7 @@ class CSVStat(CSVKitUtility):
         """
         data = list(self._rows(table, column_ids, stats))
 
-        json.dump(data, self.output_file, default=default_float_decimal, ensure_ascii=False, indent=self.args.indent)
+        dump_json(self.output_file, data, indent=self.args.indent, use_float=True)
 
     def _rows(self, table, column_ids, stats):
         for column_id in column_ids:
