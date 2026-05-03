@@ -158,6 +158,9 @@ class CSVStat(CSVKitUtility):
             self.print_column_names()
             return
 
+        if self.args.head is not None and self.args.head <= 0:
+            self.argparser.error('--head must be a positive integer (greater than 0).')
+
         if self.additional_input_expected():
             self.argparser.error('You must provide an input file or piped data.')
 

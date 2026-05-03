@@ -202,3 +202,24 @@ class TestCSVStat(CSVKitTestCase, ColumnsTests, EmptyFileTests, NamesTests):
         data = json.load(output)
         self.assertIsInstance(data, list)
         self.assertGreater(len(data), 0)
+
+    def test_head_negative_value(self):
+        self.assertError(
+            launch_new_instance,
+            ['--head', '-1'],
+            '--head must be a positive integer (greater than 0).',
+        )
+
+    def test_head_zero_value(self):
+        self.assertError(
+            launch_new_instance,
+            ['--head', '0'],
+            '--head must be a positive integer (greater than 0).',
+        )
+
+    def test_head_negative_5_value(self):
+        self.assertError(
+            launch_new_instance,
+            ['--head', '-5'],
+            '--head must be a positive integer (greater than 0).',
+        )
