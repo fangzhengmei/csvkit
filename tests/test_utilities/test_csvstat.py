@@ -169,3 +169,36 @@ class TestCSVStat(CSVKitTestCase, ColumnsTests, EmptyFileTests, NamesTests):
         ])
 
         self.assertEqual(output, '9,748.35\n')
+
+    def test_head_with_count(self):
+        output = self.get_output(['--count', '--head', '10', 'examples/realdata/ks_1033_data.csv'])
+        self.assertEqual(output, '10\n')
+
+    def test_head_with_count_more_than_rows(self):
+        output = self.get_output(['--count', '--head', '2000', 'examples/realdata/ks_1033_data.csv'])
+        self.assertEqual(output, '1575\n')
+
+    def test_head_basic(self):
+        output = self.get_output(['--head', '10', 'examples/realdata/ks_1033_data.csv'])
+        self.assertIn('Row count: 10', output)
+        self.assertIn('Unique values:', output)
+
+    def test_head_with_mean(self):
+        output = self.get_output(['-c', 'quantity', '--mean', '--head', '10', 'examples/realdata/ks_1033_data.csv'])
+        self.assertNotEqual(output, '')
+
+    def test_head_with_no_header_row(self):
+        output = self.get_output(['--head', '2', '--no-header-row', 'examples/no_header_row3.csv'])
+        self.assertIn('Row count: 2', output)
+
+    def test_head_with_csv_output(self):
+        output = self.get_output_as_io(['--csv', '--head', '10', 'examples/realdata/ks_1033_data.csv'])
+        reader = agate.csv.reader(output)
+        header = next(reader)
+        self.assertEqual(header[1], 'column_name')
+
+    def test_head_with_json_output(self):
+        output = self.get_output_as_io(['--json', '--head', '10', 'examples/realdata/ks_1033_data.csv'])
+        data = json.load(output)
+        self.assertIsInstance(data, list)
+        self.assertGreater(len(data), 0)

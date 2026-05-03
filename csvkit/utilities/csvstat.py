@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import itertools
 import json
 import locale
 import warnings
@@ -147,6 +148,10 @@ class CSVStat(CSVKitUtility):
             '-I', '--no-inference', dest='no_inference', action='store_true',
             help='Disable type inference (and --locale, --date-format, --datetime-format, --no-leading-zeroes) '
                  'when parsing the input.')
+        self.argparser.add_argument(
+            '--head', dest='head', type=int,
+            help='Preview mode: only analyze the first N data rows (excluding header). '
+                 'Useful for quick analysis of large CSV files without reading the entire file.')
 
     def main(self):
         if self.args.names_only:
@@ -172,7 +177,14 @@ class CSVStat(CSVKitUtility):
                 'You may not specify --count and an operation (--mean, --median, etc) at the same time.')
 
         if self.args.count_only:
-            count = len(list(agate.csv.reader(self.skip_lines(), **self.reader_kwargs)))
+            reader = agate.csv.reader(self.skip_lines(), **self.reader_kwargs)
+
+            if self.args.head:
+                rows = list(itertools.islice(reader, self.args.head + (0 if self.args.no_header_row else 1)))
+            else:
+                rows = list(reader)
+
+            count = len(rows)
 
             if not self.args.no_header_row:
                 count -= 1
@@ -181,14 +193,17 @@ class CSVStat(CSVKitUtility):
 
             return
 
-        sniff_limit = self.args.sniff_limit if self.args.sniff_limit != -1 else None
-        table = agate.Table.from_csv(
-            self.input_file,
-            skip_lines=self.args.skip_lines,
-            sniff_limit=sniff_limit,
-            column_types=self.get_column_types(),
-            **self.reader_kwargs,
-        )
+        if self.args.head:
+            table = self._read_table_with_head()
+        else:
+            sniff_limit = self.args.sniff_limit if self.args.sniff_limit != -1 else None
+            table = agate.Table.from_csv(
+                self.input_file,
+                skip_lines=self.args.skip_lines,
+                sniff_limit=sniff_limit,
+                column_types=self.get_column_types(),
+                **self.reader_kwargs,
+            )
 
         column_ids = parse_column_identifiers(
             self.args.columns,
@@ -220,6 +235,31 @@ class CSVStat(CSVKitUtility):
                 self.print_json(table, column_ids, stats)
             else:
                 self.print_stats(table, column_ids, stats)
+
+    def _read_table_with_head(self):
+        self.skip_lines()
+        reader = agate.csv.reader(self.input_file, **self.reader_kwargs)
+
+        if self.args.no_header_row:
+            try:
+                first_row = next(reader)
+            except StopIteration:
+                return agate.Table([])
+
+            data_rows = list(itertools.islice(itertools.chain([first_row], reader), self.args.head))
+            column_names = None
+        else:
+            try:
+                column_names = next(reader)
+            except StopIteration:
+                return agate.Table([])
+
+            data_rows = list(itertools.islice(reader, self.args.head))
+
+        if column_names is None:
+            column_names = [agate.utils.letter_name(i) for i in range(len(data_rows[0]))] if data_rows else []
+
+        return agate.Table(data_rows, column_names, column_types=self.get_column_types())
 
     def is_finite_decimal(self, value):
         return isinstance(value, Decimal) and value.is_finite()
