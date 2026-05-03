@@ -19,6 +19,7 @@ Prints descriptive statistics for all columns in a CSV file. Will intelligently 
                   [--stdev] [--len] [--max-precision] [--freq]
                   [--freq-count FREQ_COUNT] [--count]
                   [--decimal-format DECIMAL_FORMAT] [-G] [-y SNIFF_LIMIT] [-I]
+                  [--head HEAD]
                   [FILE]
 
    Print descriptive statistics for each column in a CSV file.
@@ -68,6 +69,12 @@ Prints descriptive statistics for all columns in a CSV file. Will intelligently 
      -I, --no-inference    Disable type inference (and --locale, --date-format,
                            --datetime-format, --no-leading-zeroes) when parsing
                            the input.
+     --head HEAD           Preview mode: only analyze the first N data rows
+                           (excluding header). This is useful for quick analysis
+                           of large CSV files without reading the entire file.
+                           Must be a positive integer (greater than 0). Can be
+                           combined with --count to quickly preview the number of
+                           rows in the file.
 
 See also: :doc:`../common_arguments`.
 
@@ -102,3 +109,17 @@ If a single stat *and* a single column are requested, only a value will be retur
 
    $ csvstat -c 4 --mean examples/realdata/FY09_EDU_Recipients_by_State.csv
    6,263.904
+
+Use ``--head`` to quickly preview large CSV files by analyzing only the first N data rows:
+
+.. code-block:: console
+
+   $ csvstat --head 100 examples/very_large_file.csv
+   ... (statistics based on first 100 data rows)
+
+Combine ``--head`` with ``--count`` to quickly estimate row count without reading the entire file:
+
+.. code-block:: console
+
+   $ csvstat --count --head 1000 examples/very_large_file.csv
+   1000 (if file has at least 1000 rows)
